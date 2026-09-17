@@ -1,0 +1,14 @@
+{
+  "ID": "745B50E713684389B6424E3D2FD2AB3B",
+  "ActionKeyword": "=",
+  "IsGlobal": false,
+  "Name": "Soos",
+  "Author": "soos",
+  "Version": "0.1.0",
+  "Language": "csharp",
+  "Website": "https://github.com/marelevn/soos",
+  "ExecuteFileName": "Community.PowerToys.Run.Plugin.Soos.dll",
+  "IcoPathDark": "Images\\soos.dark.png",
+  "IcoPathLight": "Images\\soos.light.png",
+  "DynamicLoading": false
+}

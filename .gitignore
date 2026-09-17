@@ -1,0 +1,8 @@
+/target
+/ref
+.DS_Store
+Thumbs.db
+integrations/powertoys/bin/
+integrations/powertoys/obj/
+integrations/alfred/icon.png
+integrations/alfred/*.alfredworkflow

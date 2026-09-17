@@ -1,0 +1,60 @@
+[package]
+name = "soos-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Soos desktop app: a document where every line is an expression"
+
+[[bin]]
+name = "soos-app"
+path = "src/main.rs"
+
+[dependencies]
+soos-core = { path = "../soos-core" }
+
+# default-features = false trades the wgpu render backend (Vulkan/DX12,
+# ~150-200MB idle RSS just from the graphics stack) for glow (OpenGL): same
+# egui-level API, no source changes needed since main.rs never calls into
+# wgpu directly. Accessibility (accesskit) and windowing (wayland/x11)
+# aren't part of eframe's `default` feature set once it's disabled, so
+# they're re-listed explicitly rather than silently dropped.
+eframe = { version = "0.36", default-features = false, features = [
+    "glow",
+    "default_fonts",
+    "wayland",
+    "x11",
+    "accesskit",
+    "persistence",
+] }
+global-hotkey = "0.8"
+serde = { version = "1", features = ["derive"] }
+# Already fully compiled into this binary via soos-core's RateSource -- a
+# direct dep here for the update check's own request costs nothing extra.
+ureq = { version = "3", features = ["json"] }
+
+# tray-icon's default backend wants a gtk main loop on Linux; `ksni` is a
+# pure-Rust StatusNotifierItem implementation that runs its own thread.
+#
+# default-features = false here too: tray-icon's crate-level defaults
+# (muda-libxdo, libappindicator) both gate their actual dependencies to
+# Linux/BSD in tray-icon's own manifest, so enabling them on Windows/macOS
+# builds nothing extra -- it only resolves and locks a glib/gtk dependency
+# subgraph into Cargo.lock that no real build here ever compiles.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = { version = "0.25", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
+
+# Embeds soos.ico as a real PE resource (see build.rs) so Explorer/taskbar/
+# Alt-Tab show the app icon for the raw .exe file -- the window itself
+# already gets its icon via `with_icon()` at runtime, this is the one
+# Windows-only gap that leaves. Harmless to list unconditionally: cargo
+# still runs build.rs on every platform, but the `compile()` call inside
+# it is itself gated to `cfg!(windows)`, so this crate does nothing on
+# macOS/Linux beyond a fast, do-nothing compile.
+[build-dependencies]
+winresource = "0.1"

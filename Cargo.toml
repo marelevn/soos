@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/soos-core", "crates/soos-app", "crates/soos-cli"]
+
+[workspace.package]
+version = "1.0.0-rc"
+edition = "2021"
+# Option::is_none_or (currency.rs, soos-app/src/main.rs) is the binding
+# constraint -- stabilized in 1.82.
+rust-version = "1.82"
+license = "MIT"
+authors = ["Quan Hoang (https://github.com/marelevn)"]
+# GitHub's REST API (unlike the web UI / git remotes) does not follow an
+# account-rename redirect -- main.rs's latest_release_url() derives the
+# update-check API URL from this field, so a stale owner here silently
+# 404s that feature forever, not just breaks a doc link.
+repository = "https://github.com/marelevn/soos"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+# Verified zero catch_unwind/panic::catch use anywhere in the workspace, so
+# nothing relies on unwinding a panic -- abort skips generating the tables
+# for it.
+panic = "abort"
+
+# Adds Code::LaunchApp2 (the OS "Calculator" key) support upstream is
+# missing on Windows/Linux -- see that repo's PATCH.md for the two-line
+# diff and how to re-apply it if global-hotkey is ever upgraded. Pinned to
+# a tag, not a floating branch, so this can't change out from under a build.
+[patch.crates-io]
+global-hotkey = { git = "https://github.com/marelevn/global-hotkey-patched", tag = "v0.8.0-launchapp2" }

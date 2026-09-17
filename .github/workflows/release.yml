@@ -1,0 +1,180 @@
+name: Release
+
+# Builds unsigned installers/archives for all three platforms on a `v*` tag
+# push and attaches them to a GitHub Release. No code-signing certs
+# configured yet -- see the commented-out signing steps in each job, which
+# name the secrets to add later. Enabling signing is then a secrets change,
+# not a workflow rewrite.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-zip:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p soos-app -p soos-cli
+
+      # No installer: soos-core::currency::data_dir always saves next to the
+      # running exe, so unzip and run is the whole install -- nothing
+      # written outside this folder, nothing to uninstall. No separate .ico
+      # needed either: soos-app.exe embeds its own icon resource (see
+      # crates/soos-app/build.rs).
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $dir = "dist/soos-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item target/release/soos-app.exe, target/release/soos-cli.exe $dir
+          Compress-Archive -Path $dir -DestinationPath soos-windows-x86_64.zip
+
+      # - name: Sign binaries
+      #   if: env.WINDOWS_CERT_BASE64 != ''
+      #   env:
+      #     WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+      #     WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      #   run: |
+      #     [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+      #     signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 dist/soos-windows-x86_64/*.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soos-windows-zip
+          path: soos-windows-x86_64.zip
+
+  macos-dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p soos-app -p soos-cli
+
+      - name: Build .app bundle
+        run: |
+          set -euo pipefail
+          APP=dist/Soos.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp target/release/soos-app "$APP/Contents/MacOS/"
+          cp target/release/soos-cli "$APP/Contents/MacOS/"
+          cp assets/icons/soos.icns "$APP/Contents/Resources/soos.icns"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Soos</string>
+            <key>CFBundleDisplayName</key><string>Soos</string>
+            <key>CFBundleIdentifier</key><string>dev.soos.Soos</string>
+            <key>CFBundleVersion</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundleExecutable</key><string>soos-app</string>
+            <key>CFBundleIconFile</key><string>soos.icns</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>10.15</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+      # create-dmg (not preinstalled on the runner, Homebrew is) lays out
+      # the DMG's Finder window from assets/mac-dmg-background.png -- a
+      # dashed "drop here" box centered at (246, 306) for the app, a solid
+      # box at (655, 306) for the Applications shortcut it also creates.
+      # Finder sizes a background by its *natural* size in points (pixels
+      # / dpi * 72), not by its pixel count -- the image is 1200x800px but
+      # tagged 96 dpi (its pHYs chunk: 3779 px/metre), so its natural size
+      # is 900x600pt, and --window-size/coordinates below are in points at
+      # that same 4:3 scale (0.75x the pixel grid), not the raw 1200x800.
+      # A background tagged 300 dpi here previously rendered at a quarter
+      # size, anchored top-left, in Finder. It's known to sometimes return
+      # a non-zero exit even after building the DMG fine (a harmless
+      # Finder/AppleScript timing race) -- `|| true` plus the explicit
+      # `test -f` after is the real pass/fail signal, not the exit code.
+      - name: Build .dmg
+        run: |
+          set -euo pipefail
+          brew install create-dmg
+          create-dmg \
+            --volname "Soos" \
+            --volicon "assets/icons/soos.icns" \
+            --background "assets/mac-dmg-background.png" \
+            --window-size 900 600 \
+            --icon-size 96 \
+            --icon "Soos.app" 246 306 \
+            --hide-extension "Soos.app" \
+            --app-drop-link 655 306 \
+            Soos.dmg \
+            dist/Soos.app \
+            || true
+          test -f Soos.dmg
+
+      # - name: Sign and notarize
+      #   if: env.APPLE_CERTIFICATE_BASE64 != ''
+      #   env:
+      #     APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      #     APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      #     APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      #     APPLE_ID: ${{ secrets.APPLE_ID }}
+      #     APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      #   run: |
+      #     # import APPLE_CERTIFICATE_BASE64 into a temporary keychain, then:
+      #     codesign --deep --force --sign "$APPLE_TEAM_ID" dist/Soos.app
+      #     xcrun notarytool submit Soos.dmg --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+      #     xcrun stapler staple Soos.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soos-macos-dmg
+          path: Soos.dmg
+
+  linux-tar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+      - run: cargo build --release -p soos-app -p soos-cli
+
+      - name: Package tar.gz
+        run: |
+          set -euo pipefail
+          DIR=dist/soos-linux-x86_64
+          mkdir -p "$DIR"
+          cp target/release/soos-app target/release/soos-cli "$DIR/"
+          cp assets/icons/hicolor/256x256.png "$DIR/soos.png"
+          cat > "$DIR/soos.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Soos
+          Comment=A document where every line is an expression
+          Exec=soos-app
+          Icon=soos
+          Categories=Utility;Calculator;
+          EOF
+          tar czf soos-linux-x86_64.tar.gz -C dist soos-linux-x86_64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: soos-linux-tar
+          path: soos-linux-x86_64.tar.gz
+
+  publish:
+    needs: [windows-zip, macos-dmg, linux-tar]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          draft: true
+          files: |
+            soos-windows-zip/*.zip
+            soos-macos-dmg/*.dmg
+            soos-linux-tar/*.tar.gz

@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>bundleid</key>
+	<string>dev.soos.alfred</string>
+	<key>name</key>
+	<string>Soos</string>
+	<key>description</key>
+	<string>A calculator where every line is an expression -- $20 in euro - 5% discount, 20 inches in cm.</string>
+	<key>webaddress</key>
+	<string>https://github.com/marelevn/soos</string>
+	<key>version</key>
+	<string>0.1.0</string>
+	<key>createdby</key>
+	<string>soos</string>
+	<key>readme</key>
+	<string>Needs the `soos-cli` binary on PATH (or in /usr/local/bin or /opt/homebrew/bin). See README.md in this folder.</string>
+	<key>disabled</key>
+	<false/>
+	<key>connections</key>
+	<dict>
+		<key>SCRIPT-FILTER-UID</key>
+		<array>
+			<dict>
+				<key>destinationuid</key>
+				<string>COPY-OUTPUT-UID</string>
+				<key>modifiers</key>
+				<integer>0</integer>
+				<key>modifiersubtext</key>
+				<string></string>
+				<key>vitoclose</key>
+				<false/>
+			</dict>
+		</array>
+	</dict>
+	<key>objects</key>
+	<array>
+		<dict>
+			<key>uid</key>
+			<string>SCRIPT-FILTER-UID</string>
+			<key>type</key>
+			<string>alfred.workflow.input.scriptfilter</string>
+			<key>config</key>
+			<dict>
+				<key>keyword</key>
+				<string>=</string>
+				<key>subtext</key>
+				<string>Type an expression, e.g. 20 inches in cm</string>
+				<key>script</key>
+				<string>bin="soos-cli"
+for candidate in /opt/homebrew/bin/soos-cli /usr/local/bin/soos-cli; do
+  if [ -x "$candidate" ]; then
+    bin="$candidate"
+    break
+  fi
+done
+if ! command -v "$bin" >/dev/null 2>&1; then
+  printf '{"items":[{"title":"soos-cli not found on PATH","subtitle":"install soos-cli and make sure it is on PATH","valid":false}]}'
+  exit 0
+fi
+"$bin" --alfred "$1"</string>
+				<key>scriptargtype</key>
+				<integer>0</integer>
+				<key>type</key>
+				<integer>0</integer>
+				<key>withspace</key>
+				<true/>
+				<key>alfredfiltersresults</key>
+				<false/>
+				<key>alfredfiltersresultsmatchmode</key>
+				<integer>0</integer>
+				<key>argumenttype</key>
+				<integer>0</integer>
+				<key>queuedelaymode</key>
+				<integer>0</integer>
+				<key>queuedelayimmediatelyinitially</key>
+				<true/>
+				<key>queuedelaycustom</key>
+				<integer>3</integer>
+				<key>queuemode</key>
+				<integer>1</integer>
+				<key>runningsubtext</key>
+				<string>Calculating...</string>
+				<key>title</key>
+				<string>Soos</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>uid</key>
+			<string>COPY-OUTPUT-UID</string>
+			<key>type</key>
+			<string>alfred.workflow.output.clipboard</string>
+			<key>config</key>
+			<dict>
+				<key>autopaste</key>
+				<false/>
+				<key>clipboardtext</key>
+				<string>{query}</string>
+				<key>ignoredynamicplaceholders</key>
+				<false/>
+				<key>transient</key>
+				<false/>
+			</dict>
+		</dict>
+	</array>
+	<key>uidata</key>
+	<dict>
+		<key>SCRIPT-FILTER-UID</key>
+		<dict>
+			<key>xpos</key>
+			<real>200</real>
+			<key>ypos</key>
+			<real>200</real>
+		</dict>
+		<key>COPY-OUTPUT-UID</key>
+		<dict>
+			<key>xpos</key>
+			<real>420</real>
+			<key>ypos</key>
+			<real>200</real>
+		</dict>
+	</dict>
+</dict>
+</plist>
