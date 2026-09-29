@@ -1,0 +1,159 @@
+name: Release
+
+# On a `v*` tag: builds unsigned archives for all three platforms and
+# attaches them to a draft GitHub Release (see CONTRIBUTING.md,
+# "Releasing"). Actions are pinned to commits; the comment names the
+# release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows-zip:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - run: cargo build --release --locked -p soos-app -p soos-cli
+
+      # soos-cli.exe goes beside the app so they share its data folder.
+      - name: Package zip
+        shell: pwsh
+        run: |
+          $dir = "dist/soos-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          Copy-Item target/release/soos-app.exe, target/release/soos-cli.exe $dir
+          Compress-Archive -Path $dir -DestinationPath soos-windows-x86_64.zip
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: soos-windows-zip
+          path: soos-windows-x86_64.zip
+
+  macos-dmg:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - run: >-
+          cargo build --release --locked -p soos-app -p soos-cli
+          --target aarch64-apple-darwin --target x86_64-apple-darwin
+
+      # One binary for Apple silicon and Intel, so LSMinimumSystemVersion
+      # below holds for both.
+      - name: Build .app bundle
+        run: |
+          set -euo pipefail
+          APP=dist/Soos.app
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          for bin in soos-app soos-cli; do
+            lipo -create -output "$APP/Contents/MacOS/$bin" \
+              "target/aarch64-apple-darwin/release/$bin" \
+              "target/x86_64-apple-darwin/release/$bin"
+          done
+          cp assets/icons/soos.icns "$APP/Contents/Resources/soos.icns"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>Soos</string>
+            <key>CFBundleDisplayName</key><string>Soos</string>
+            <key>CFBundleIdentifier</key><string>dev.soos.Soos</string>
+            <key>CFBundleVersion</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundleExecutable</key><string>soos-app</string>
+            <key>CFBundleIconFile</key><string>soos.icns</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>10.15</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+      # Window size and icon positions are in points: the background image
+      # is 1200x800 px tagged 96 dpi, which Finder shows as 900x600 pt, with
+      # its two drop boxes centred at (246, 306) and (655, 306).
+      # create-dmg sometimes exits non-zero after building a good image
+      # (a Finder scripting race), so the image itself is verified instead.
+      - name: Build .dmg
+        run: |
+          set -euo pipefail
+          brew install create-dmg
+          create-dmg \
+            --volname "Soos" \
+            --volicon "assets/icons/soos.icns" \
+            --background "assets/mac-dmg-background.png" \
+            --window-size 900 600 \
+            --icon-size 96 \
+            --icon "Soos.app" 246 306 \
+            --hide-extension "Soos.app" \
+            --app-drop-link 655 306 \
+            Soos.dmg \
+            dist/Soos.app \
+            || echo "create-dmg exited $?; verifying the image"
+          hdiutil verify Soos.dmg
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: soos-macos-dmg
+          path: Soos.dmg
+
+  linux-tar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+      - run: cargo build --release --locked -p soos-app -p soos-cli
+
+      # soos.desktop needs its paths filled in; the README's Linux guide
+      # shows how.
+      - name: Package tar.gz
+        run: |
+          set -euo pipefail
+          DIR=dist/soos-linux-x86_64
+          mkdir -p "$DIR"
+          cp target/release/soos-app target/release/soos-cli "$DIR/"
+          cp assets/icons/hicolor/256x256.png "$DIR/soos.png"
+          cat > "$DIR/soos.desktop" <<EOF
+          [Desktop Entry]
+          Type=Application
+          Name=Soos
+          Comment=A document where every line is an expression
+          Exec=soos-app
+          Icon=soos
+          Categories=Utility;Calculator;
+          EOF
+          tar czf soos-linux-x86_64.tar.gz -C dist soos-linux-x86_64
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: soos-linux-tar
+          path: soos-linux-x86_64.tar.gz
+
+  publish:
+    needs: [windows-zip, macos-dmg, linux-tar]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          draft: true
+          files: |
+            soos-windows-zip/*.zip
+            soos-macos-dmg/*.dmg
+            soos-linux-tar/*.tar.gz

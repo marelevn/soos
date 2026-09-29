@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows10.0.26100.0</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Community.PowerToys.Run.Plugin.Soos</AssemblyName>
+    <RootNamespace>Community.PowerToys.Run.Plugin.Soos</RootNamespace>
+    <Platforms>x64;ARM64</Platforms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Community.PowerToys.Run.Plugin.Dependencies" Version="0.97.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\assets\icons\hicolor\32x32.png" Link="Images\soos.light.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\assets\icons\hicolor\32x32.png" Link="Images\soos.dark.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

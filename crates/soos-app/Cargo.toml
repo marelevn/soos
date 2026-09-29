@@ -1,0 +1,44 @@
+[package]
+name = "soos-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Soos desktop app: a document where every line is an expression"
+
+[[bin]]
+name = "soos-app"
+path = "src/main.rs"
+
+[dependencies]
+soos-core = { path = "../soos-core" }
+
+# glow (OpenGL) instead of the default wgpu, whose graphics stack uses much
+# more memory while idle. The other default features are listed by hand.
+eframe = { version = "0.36", default-features = false, features = [
+    "glow",
+    "default_fonts",
+    "wayland",
+    "x11",
+    "accesskit",
+    "persistence",
+] }
+global-hotkey = "0.8"
+serde = { version = "1", features = ["derive"] }
+# Already in the binary through soos-core; the update check uses it too.
+ureq = { version = "3", features = ["json"] }
+
+# On Linux, `ksni` instead of the default backend, which needs a gtk main
+# loop. Without default features, Cargo.lock also skips a gtk dependency
+# tree no build here uses.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+tray-icon = { version = "0.25", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
+
+# For the Windows .exe icon; see build.rs.
+[build-dependencies]
+winresource = "0.1"

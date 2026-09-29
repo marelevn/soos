@@ -1,0 +1,3 @@
+# Normalise everything to LF on commit regardless of the editing machine's
+# line-ending settings (this repo is edited from both macOS and Windows).
+* text=auto eol=lf

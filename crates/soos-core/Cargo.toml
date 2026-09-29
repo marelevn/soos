@@ -1,0 +1,20 @@
+[package]
+name = "soos-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Line-by-line natural-language calculator engine (no UI)"
+
+[dependencies]
+# Pinned exactly: `format::ERROR_RULES` matches fend's error wording, and
+# `engine` and `preprocess` rely on 1.5.8's behaviour. Re-check both when
+# upgrading.
+fend-core = "=1.5.8"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono-tz = "0.10"
+serde = { version = "1", features = ["derive"] }
+regex = "1"
+ureq = { version = "3", features = ["json"] }
+serde_json = "1"
