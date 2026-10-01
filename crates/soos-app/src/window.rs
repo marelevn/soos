@@ -39,10 +39,10 @@ impl SoosApp {
         if self.size_before_converters.is_some() {
             return;
         }
-        let size = ctx
-            .input(|i| i.viewport().inner_rect)
-            .map(|rect| rect.size());
-        if let Some(size) = size.filter(|size| size.x < CONVERTERS_WINDOW_WIDTH) {
+        // The content rect, not the viewport's `inner_rect`, which egui
+        // leaves empty where the window's position is unknown (Wayland).
+        let size = ctx.content_rect().size();
+        if size.x < CONVERTERS_WINDOW_WIDTH {
             self.size_before_converters = Some(size);
             let wider = egui::vec2(CONVERTERS_WINDOW_WIDTH, size.y);
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(wider));

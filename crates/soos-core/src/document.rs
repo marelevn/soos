@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine;
 use crate::highlight::{CONVERSION_WORD, DATE_WORD};
-use crate::preprocess::{self, LineKind, INTO_WORD, TIMES_WORD};
+use crate::preprocess::{self, INTO_WORD, TIMES_WORD};
 
 /// One document line's outcome -- see [`recalc`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -364,16 +364,12 @@ pub(crate) fn recalc(
             break;
         }
         match preprocess::classify(raw_line) {
-            kind @ (LineKind::Blank | LineKind::Header | LineKind::Label) => {
+            Err(blank_header_or_label) => {
                 running.block.clear();
                 running.block_has_error = false;
-                results.push(match kind {
-                    LineKind::Blank => LineResult::Blank,
-                    LineKind::Header => LineResult::Header,
-                    _ => LineResult::Label,
-                });
+                results.push(blank_header_or_label);
             }
-            LineKind::Expr(expr) => {
+            Ok(expr) => {
                 let aggregate = reserved_assignment(&expr).is_none()
                     && (SUM.is_match(&expr) || AVG.is_match(&expr));
                 match eval_expr(ctx, &expr, aggregate, &running, now) {

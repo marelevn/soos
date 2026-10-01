@@ -1,19 +1,16 @@
 //! The global show/hide hotkey: its default, persistence, and rebinding.
+//! Not on Linux (see `FULL_DESKTOP`), where this module isn't built.
 
 use super::*;
 
-/// The keyboard's Calculator key on Windows and Linux (upstream
-/// `global-hotkey` can't register it; see CONTRIBUTING.md, "The hotkey
-/// patch"), Ctrl+Shift+Space on macOS, which has no such key. On Linux the
-/// hotkey only works under X11, not Wayland.
+/// The keyboard's Calculator key on Windows (upstream `global-hotkey`
+/// can't register it; see CONTRIBUTING.md, "The hotkey patch"),
+/// Ctrl+Shift+Space on macOS, which has no such key.
 pub(crate) fn default_hotkey() -> HotKey {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
-    {
-        HotKey::new(None, Code::LaunchApp2)
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
+    if cfg!(target_os = "macos") {
         HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::Space)
+    } else {
+        HotKey::new(None, Code::LaunchApp2)
     }
 }
 
@@ -65,18 +62,10 @@ pub(crate) fn egui_key_to_hotkey_code(key: egui::Key) -> Option<Code> {
 
 pub(crate) fn egui_modifiers_to_hotkey_modifiers(m: egui::Modifiers) -> Modifiers {
     let mut mods = Modifiers::empty();
-    if m.ctrl {
-        mods |= Modifiers::CONTROL;
-    }
-    if m.shift {
-        mods |= Modifiers::SHIFT;
-    }
-    if m.alt {
-        mods |= Modifiers::ALT;
-    }
-    if m.mac_cmd {
-        mods |= Modifiers::SUPER;
-    }
+    mods.set(Modifiers::CONTROL, m.ctrl);
+    mods.set(Modifiers::SHIFT, m.shift);
+    mods.set(Modifiers::ALT, m.alt);
+    mods.set(Modifiers::SUPER, m.mac_cmd);
     mods
 }
 
@@ -98,10 +87,8 @@ pub(crate) fn is_bare_modifier_key(key: egui::Key) -> bool {
 
 const NEEDS_MODIFIER: &str = if cfg!(target_os = "macos") {
     "Hold Cmd, Ctrl or Option with that key"
-} else if cfg!(target_os = "windows") {
-    "Hold Ctrl, Alt or Win with that key"
 } else {
-    "Hold Ctrl, Alt or Super with that key"
+    "Hold Ctrl, Alt or Win with that key"
 };
 
 /// A global hotkey takes its key away from every other app, so a key that
@@ -116,6 +103,35 @@ pub(crate) fn needs_a_modifier(code: Code, mods: Modifiers) -> bool {
 }
 
 impl SoosApp {
+    /// Register the saved hotkey. Like the tray, needs the event loop
+    /// running; without a manager the `⌨` button says hotkeys are
+    /// unavailable.
+    pub(crate) fn init_hotkey(&mut self, ctx: &egui::Context) {
+        self.hotkeys = match GlobalHotKeyManager::new() {
+            Ok(manager) => Some(manager),
+            Err(e) => {
+                eprintln!("soos: global hotkey manager unavailable: {e}");
+                None
+            }
+        };
+        if self.hotkeys.is_some() {
+            let label = hotkey_label(&self.current_hotkey);
+            self.hotkey_message = self
+                .apply_hotkey(self.current_hotkey)
+                .err()
+                .map(|e| format!("{e} ({label})"));
+        }
+
+        let tx = self.tx.clone();
+        let repaint_ctx = ctx.clone();
+        GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
+            if event.state == HotKeyState::Pressed {
+                let _ = tx.send(AppEvent::Toggle);
+                repaint_ctx.request_repaint();
+            }
+        }));
+    }
+
     /// `⌨`: click to record a new hotkey, click again to cancel.
     pub(crate) fn hotkey_control(&mut self, ui: &mut egui::Ui, palette: Palette) {
         let tooltip = if self.hotkeys.is_none() {

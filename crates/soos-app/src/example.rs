@@ -62,8 +62,17 @@ pub(crate) const EXAMPLE_LINES: &[(&str, Option<&str>)] = &[
     ("", None),
     ("# The status bar", None),
     ("// \u{2194} converters   ? this example", None),
-    ("// \u{25b2} always on top   \u{b1} high precision", None),
-    ("// \u{25cc} theme   \u{2328} global hotkey", None),
+    // Linux has no ▲ or ⌨; see `FULL_DESKTOP`.
+    if FULL_DESKTOP {
+        ("// \u{25b2} always on top   \u{b1} high precision", None)
+    } else {
+        ("// \u{b1} high precision", None)
+    },
+    if FULL_DESKTOP {
+        ("// \u{25cc} theme   \u{2328} global hotkey", None)
+    } else {
+        ("// \u{25cc} theme", None)
+    },
     ("// Hover over one for what it does.", None),
     ("", None),
     ("// Cmd/Ctrl+T new tab, Cmd/Ctrl+W close it,", None),

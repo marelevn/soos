@@ -8,6 +8,10 @@ on:
     branches: [main]
   pull_request:
 
+# Every job only reads the code, so the token gets nothing more.
+permissions:
+  contents: read
+
 jobs:
   test:
     strategy:

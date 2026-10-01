@@ -138,7 +138,6 @@ mod tests {
 
     #[test]
     fn numbers_and_bare_identifiers_are_untokenized() {
-        // "price" and "Euro" stay plain -- see the module doc comment.
         assert_eq!(kinds("price = $8 times 3"), vec![TokenKind::ConversionWord]);
         assert_eq!(kinds("4 GBP in Euro"), vec![TokenKind::ConversionWord]);
     }
