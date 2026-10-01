@@ -107,12 +107,16 @@ the exchange rates and today's date will differ.
   example, `▲` always on top, `±` high precision (every digit of a currency
   amount instead of cents), the theme (`◌` follows the system, `○` light,
   `●` dark) and `⌨` the global hotkey. Hover over one for what it does.
-- **Desktop integration** -- a tray icon, and a global show/hide hotkey
-  (the Calculator key by default on Windows and Linux, Ctrl+Shift+Space on
-  macOS; click `⌨` and press a new one). Closing the window hides it to the
-  tray, or quits if there's no tray. Cmd/Ctrl +/-/0 zooms the text. On
-  Linux the hotkey relies on X11, so it may not fire under Wayland, and
-  some desktops (GNOME without an AppIndicator extension) show no tray.
+  Linux has no `▲` or `⌨` (see below).
+- **Desktop integration** -- a tray icon: click it to show the window,
+  right-click it for Quit. On Windows and macOS, closing the window hides
+  it to the tray (on macOS, the Dock icon goes too), or quits if there's
+  no tray, and a global hotkey shows and hides it (the Calculator key by
+  default on Windows, Ctrl+Shift+Space on macOS; click `⌨` and press a
+  new one). On Linux, closing quits, and there's no global hotkey or
+  always on top: Wayland can't hide a window, raise it from a hotkey, or
+  keep it on top. Some Linux desktops (GNOME without an AppIndicator
+  extension) show no tray. Cmd/Ctrl +/-/0 zooms the text.
 - **`soos-cli`** for terminals and scripts: `soos-cli '20 inches in cm'`
   prints what the app shows beside that line, using the app's rates and
   your converters. An Alfred workflow and a PowerToys Run plugin are thin
@@ -483,6 +487,9 @@ Built on [fend](https://github.com/printfn/fend),
 [egui/eframe](https://github.com/emilk/egui) and other MIT/Apache-2.0
 crates, listed in the `Cargo.toml` files.
 The app's typeface is [JetBrains Mono](https://www.jetbrains.com/lp/mono/),
-Regular and Bold, under the [SIL Open Font License 1.1](assets/fonts/OFL.txt).
+Regular and Bold, under the [SIL Open Font License 1.1](assets/fonts/OFL.txt);
+currency signs it lacks come from a subset of
+[DejaVu Sans Mono](https://dejavu-fonts.github.io/), under
+[its license](assets/fonts/DejaVu-LICENSE.txt).
 Rates from [Frankfurter](https://frankfurter.dev); thanks to
 [Numi](https://github.com/nikolaeu/numi) for the idea.

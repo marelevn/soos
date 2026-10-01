@@ -143,9 +143,33 @@ There's no installer: `soos_core::storage::data_dir` keeps everything next
 to the executable, except on macOS, where replacing `Soos.app` to update
 would take the data with it, so it uses Application Support.
 
+## Fonts
+
+JetBrains Mono lacks most currency signs Soos can print (`₹`, `₩`, `₺`,
+`฿` and more). `assets/fonts/DejaVuSansMono-Currency.ttf` has just those,
+cut from DejaVu Sans Mono 2.37 with fontTools, so the fallback is a few KB
+instead of a whole font:
+
+```sh
+pyftsubset DejaVuSansMono.ttf --text="₹₩₺₱₪₦₸₡₲₵₭฿₨" \
+  --output-file=assets/fonts/DejaVuSansMono-Currency.ttf
+```
+
+DejaVu has no `₼`, `₾` or `﷼`, so those show as boxes. A sign added to
+soos-core's currencies that JetBrains Mono lacks belongs in that list, and
+in the test in `style.rs`.
+
 ## Icons
 
 `assets/icons/` (`soos.ico`, `soos.icns`, `hicolor/{32x32,256x256}.png`) is
 made from `assets/logo.svg` with an SVG rasterizer such as `resvg`. The logo
 draws its letters as text in JetBrains Mono ExtraBold, so that font must be
 installed when you rasterize it.
+
+`soos.icns` and `soos.ico` come from a 1024 px PNG of the logo, through
+`scripts/macos-icon.py` (needs Pillow). The Mac icon isn't the
+logo as drawn: Apple's grid puts an 824 px body with a 185 px corner on a
+1024 px canvas, and the edge-to-edge logo looks oversized next to other
+Dock icons. For the same reason the app passes no window icon on macOS --
+eframe would otherwise set the full-bleed one over the bundle's `.icns`.
+The `.ico` keeps the full-bleed logo, at 16, 24, 32, 48, 64 and 256 px.

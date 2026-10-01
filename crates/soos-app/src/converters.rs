@@ -153,55 +153,28 @@ pub(crate) fn converters_window(
                     ui.end_row();
 
                     for (i, row) in converters.iter_mut().enumerate() {
-                        fixed_cell(ui, egui::vec2(UNIT_COL_WIDTH, row_height), |ui| {
-                            let unit_resp = ui.add(
-                                egui::TextEdit::singleline(&mut row.unit)
-                                    .hint_text(
-                                        RichText::new("teu").color(palette.comment).font(mono()),
-                                    )
-                                    .font(mono())
-                                    .margin(text_edit_margin)
-                                    .desired_width(UNIT_COL_WIDTH),
-                            );
-                            if want_focus == Some(i) {
-                                unit_resp.request_focus();
-                            }
-                        });
-                        fixed_cell(ui, egui::vec2(ALIASES_COL_WIDTH, row_height), |ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut row.aliases)
-                                    .hint_text(
-                                        RichText::new("TEU, teus")
-                                            .color(palette.comment)
-                                            .font(mono()),
-                                    )
-                                    .font(mono())
-                                    .margin(text_edit_margin)
-                                    .desired_width(ALIASES_COL_WIDTH),
-                            );
-                        });
-                        fixed_cell(ui, egui::vec2(BASE_COL_WIDTH, row_height), |ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut row.base)
-                                    .hint_text(
-                                        RichText::new("cbm").color(palette.comment).font(mono()),
-                                    )
-                                    .font(mono())
-                                    .margin(text_edit_margin)
-                                    .desired_width(BASE_COL_WIDTH),
-                            );
-                        });
-                        fixed_cell(ui, egui::vec2(FACTOR_COL_WIDTH, row_height), |ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut row.factor)
-                                    .hint_text(
-                                        RichText::new("33.2").color(palette.comment).font(mono()),
-                                    )
-                                    .font(mono())
-                                    .margin(text_edit_margin)
-                                    .desired_width(FACTOR_COL_WIDTH),
-                            );
-                        });
+                        let fields = [
+                            (&mut row.unit, UNIT_COL_WIDTH, "teu"),
+                            (&mut row.aliases, ALIASES_COL_WIDTH, "TEU, teus"),
+                            (&mut row.base, BASE_COL_WIDTH, "cbm"),
+                            (&mut row.factor, FACTOR_COL_WIDTH, "33.2"),
+                        ];
+                        for (column, (text, width, hint)) in fields.into_iter().enumerate() {
+                            fixed_cell(ui, egui::vec2(width, row_height), |ui| {
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(text)
+                                        .hint_text(
+                                            RichText::new(hint).color(palette.comment).font(mono()),
+                                        )
+                                        .font(mono())
+                                        .margin(text_edit_margin)
+                                        .desired_width(width),
+                                );
+                                if column == 0 && want_focus == Some(i) {
+                                    resp.request_focus();
+                                }
+                            });
+                        }
                         fixed_cell(ui, egui::vec2(CONTROLS_COL_WIDTH, row_height), |ui| {
                             if ui
                                 .add_enabled_ui(i > 0, |ui| centered_button(ui, "\u{2191}"))
@@ -268,7 +241,6 @@ pub(crate) fn converters_window(
         *focus_row = Some(converters.len() - 1);
     }
 
-    // Applied after the loop, which borrows `converters`.
     if let Some(i) = remove {
         converters.remove(i);
     }

@@ -20,6 +20,7 @@ pub(crate) struct StatusMessage {
 
 impl SoosApp {
     pub(crate) fn status_bar(&mut self, ui: &mut egui::Ui, palette: Palette) {
+        #[cfg(not(target_os = "linux"))]
         if self.capturing_hotkey {
             self.handle_hotkey_capture(ui.ctx());
         }
@@ -55,10 +56,13 @@ impl SoosApp {
                         // Right to left, so this reads "↔ ? ▲ ± ◌ ⌨".
                         let icons = ui
                             .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                #[cfg(not(target_os = "linux"))]
                                 self.hotkey_control(ui, palette);
                                 theme_control(ui, palette);
                                 self.high_precision_control(ui, palette);
-                                self.always_on_top_control(ui, palette);
+                                if FULL_DESKTOP {
+                                    self.always_on_top_control(ui, palette);
+                                }
                                 self.example_control(ui, palette);
                                 self.converters_control(ui, palette);
                             })

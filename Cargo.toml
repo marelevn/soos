@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/soos-core", "crates/soos-app", "crates/soos-cli"]
 
 [workspace.package]
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 # Set by egui/eframe 0.36. Every crate inherits it, and CI's `msrv` job
 # checks the workspace on exactly this version.
@@ -17,6 +17,10 @@ repository = "https://github.com/marelevn/soos"
 [profile.release]
 opt-level = "s"
 lto = true
+# One unit lets LTO see the whole crate: about 1% smaller, with no runtime
+# cost. `opt-level = "z"` would save about 12% more, but made heavy lines
+# such as `e^1000` up to 5x slower, past the engine's 200 ms budget.
+codegen-units = 1
 strip = true
 # Nothing catches a panic, so unwinding buys nothing. It also means any
 # panic ends the app: evaluation must turn bad input into an error (see
@@ -24,7 +28,7 @@ strip = true
 panic = "abort"
 
 # Adds `Code::LaunchApp2`, the Calculator key, which upstream can't register
-# on Windows and Linux; see CONTRIBUTING.md, "The hotkey patch". Pinned to a
-# commit because a tag can be moved.
+# on Windows (Soos has no hotkey on Linux); see CONTRIBUTING.md, "The hotkey
+# patch". Pinned to a commit because a tag can be moved.
 [patch.crates-io]
 global-hotkey = { git = "https://github.com/marelevn/global-hotkey-patched", rev = "073d21fb74188d1ec54fa5a26844e29cd8f86190" }

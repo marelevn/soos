@@ -16,16 +16,16 @@ path = "src/main.rs"
 soos-core = { path = "../soos-core" }
 
 # glow (OpenGL) instead of the default wgpu, whose graphics stack uses much
-# more memory while idle. The other default features are listed by hand.
+# more memory while idle. The other default features are listed by hand,
+# except `default_fonts`: a few-KB DejaVu subset backs up JetBrains Mono
+# instead (see `install_fonts`).
 eframe = { version = "0.36", default-features = false, features = [
     "glow",
-    "default_fonts",
     "wayland",
     "x11",
     "accesskit",
     "persistence",
 ] }
-global-hotkey = "0.8"
 serde = { version = "1", features = ["derive"] }
 # Already in the binary through soos-core; the update check uses it too.
 ureq = { version = "3", features = ["json"] }
@@ -35,9 +35,25 @@ ureq = { version = "3", features = ["json"] }
 # tree no build here uses.
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = { version = "0.25", default-features = false }
+# Not on Linux, which has no global hotkey; see `FULL_DESKTOP`.
+global-hotkey = "0.8"
+
+# To hide the Dock icon with the window; see `show_in_dock`. Both are
+# already in the build through eframe and tray-icon.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSResponder",
+    "NSRunningApplication",
+] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
+# GNOME draws no title bar for a Wayland app; without this feature winit
+# draws a plain grey one instead of the Adwaita-style bar.
+winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
 
 # For the Windows .exe icon; see build.rs.
 [build-dependencies]

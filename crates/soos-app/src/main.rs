@@ -14,6 +14,7 @@ use std::time::Instant;
 use eframe::egui::{
     self, text::LayoutJob, Color32, FontId, RichText, TextFormat, Theme, ViewportCommand,
 };
+#[cfg(not(target_os = "linux"))]
 use global_hotkey::{
     hotkey::{Code, HotKey, Modifiers},
     Error as HotkeyError, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
@@ -27,6 +28,7 @@ use tray_icon::{
 mod converters;
 mod editor;
 mod example;
+#[cfg(not(target_os = "linux"))]
 mod hotkey;
 mod recalc;
 mod status_bar;
@@ -39,6 +41,7 @@ mod window;
 use converters::*;
 use editor::*;
 use example::*;
+#[cfg(not(target_os = "linux"))]
 use hotkey::*;
 use recalc::*;
 use status_bar::*;
@@ -79,6 +82,7 @@ fn main() -> eframe::Result<()> {
 /// From the tray, hotkey and background threads to `logic()`, the only
 /// place viewport commands may be sent from.
 enum AppEvent {
+    #[cfg(not(target_os = "linux"))]
     Toggle,
     Show,
     Quit,
@@ -143,14 +147,12 @@ struct SoosApp {
     focus_converter: Option<usize>,
     /// False while hidden to the tray.
     visible: bool,
-    /// macOS: the hidden window has lost focus, so focus returning means
-    /// the Dock restored it (see `logic`).
-    hidden_unfocused: bool,
     /// The tray's Quit was chosen, so the close really closes.
     quitting: bool,
     started: bool,
     high_precision: bool,
     always_on_top: bool,
+    #[cfg(not(target_os = "linux"))]
     current_hotkey: HotKey,
     /// Waiting for a key press to become the new hotkey.
     capturing_hotkey: bool,
@@ -162,6 +164,7 @@ struct SoosApp {
     copied: Option<(String, Instant)>,
     // Dropping these removes the tray icon and unregisters the hotkey.
     tray: Option<TrayIcon>,
+    #[cfg(not(target_os = "linux"))]
     hotkeys: Option<GlobalHotKeyManager>,
     tx: Sender<AppEvent>,
     rx: Receiver<AppEvent>,
@@ -184,6 +187,7 @@ impl SoosApp {
 
     fn from_saved(saved: SavedState, rates: RateSource, recalculator: Recalculator) -> Self {
         let (tx, rx) = mpsc::channel();
+        #[cfg(not(target_os = "linux"))]
         let current_hotkey = load_hotkey(&saved);
         let (tabs, next_tab_id) = load_tabs(saved.tabs);
         let active = saved.active.min(tabs.len() - 1);
@@ -210,11 +214,11 @@ impl SoosApp {
             size_before_converters: None,
             focus_converter: None,
             visible: true,
-            hidden_unfocused: false,
             quitting: false,
             started: false,
             high_precision: saved.high_precision,
             always_on_top: saved.always_on_top,
+            #[cfg(not(target_os = "linux"))]
             current_hotkey,
             capturing_hotkey: false,
             hotkey_message: None,
@@ -222,6 +226,7 @@ impl SoosApp {
             update_status: None,
             copied: None,
             tray: None,
+            #[cfg(not(target_os = "linux"))]
             hotkeys: None,
             tx,
             rx,
@@ -315,12 +320,17 @@ impl eframe::App for SoosApp {
         self.export_converters();
         let saved = SavedState {
             high_precision: self.high_precision,
-            hotkey_code: Some(self.current_hotkey.key.to_string()),
-            hotkey_mods: self.current_hotkey.mods.bits(),
             converters: self.converters.clone(),
             tabs: self.tabs.clone(),
             active: self.active,
             always_on_top: self.always_on_top,
+            ..Default::default()
+        };
+        #[cfg(not(target_os = "linux"))]
+        let saved = SavedState {
+            hotkey_code: Some(self.current_hotkey.key.to_string()),
+            hotkey_mods: self.current_hotkey.mods.bits(),
+            ..saved
         };
         eframe::set_value(storage, eframe::APP_KEY, &saved);
     }
@@ -330,12 +340,17 @@ impl eframe::App for SoosApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.started {
             self.started = true;
-            self.apply_always_on_top(ctx);
-            self.init_tray_and_hotkey(ctx);
+            if FULL_DESKTOP {
+                self.apply_always_on_top(ctx);
+            }
+            self.init_tray(ctx);
+            #[cfg(not(target_os = "linux"))]
+            self.init_hotkey(ctx);
         }
 
         while let Ok(event) = self.rx.try_recv() {
             match event {
+                #[cfg(not(target_os = "linux"))]
                 AppEvent::Toggle => {
                     let visible = !self.visible;
                     self.set_visible(ctx, visible);
@@ -351,22 +366,12 @@ impl eframe::App for SoosApp {
         }
 
         // Closing hides to the tray, but only if there is a tray to come
-        // back from; otherwise it quits.
-        let hide_on_close = self.tray.is_some() && !self.quitting;
+        // back from and the window can hide (see `FULL_DESKTOP`); otherwise it
+        // quits.
+        let hide_on_close = self.tray.is_some() && FULL_DESKTOP && !self.quitting;
         if hide_on_close && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
             self.set_visible(ctx, false);
-        }
-
-        // macOS: egui never clears its `minimized` flag after the Dock
-        // restores the window, so it would keep skipping `ui()`. Focus
-        // coming back after a real loss of focus is the restore.
-        if cfg!(target_os = "macos") && !self.visible {
-            match ctx.input(|i| i.viewport().focused) {
-                Some(false) => self.hidden_unfocused = true,
-                Some(true) if self.hidden_unfocused => self.set_visible(ctx, true),
-                _ => {}
-            }
         }
 
         let tx = self.tx.clone();

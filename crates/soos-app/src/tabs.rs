@@ -272,11 +272,7 @@ impl SoosApp {
             self.closed.remove(0);
         }
         if self.tabs.is_empty() {
-            let id = self.next_id();
-            self.tabs.push(Tab {
-                id,
-                text: String::new(),
-            });
+            self.new_tab();
         }
         // Keep the same tab selected; if it was the one closed, select the
         // one that took its place (or the new last tab).

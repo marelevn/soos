@@ -31,11 +31,18 @@ pub(crate) const JETBRAINS_MONO_REGULAR: &[u8] =
     include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 pub(crate) const JETBRAINS_MONO_BOLD: &[u8] =
     include_bytes!("../../../assets/fonts/JetBrainsMono-Bold.ttf");
+/// The currency signs JetBrains Mono lacks (`₹`, `₩`, `₺`, `฿` and nine
+/// more), cut from DejaVu Sans Mono so the fallback is a few KB rather
+/// than a whole font; see CONTRIBUTING.md, "Fonts". DejaVu has no `₼`,
+/// `₾` or `﷼`, so those show as boxes.
+pub(crate) const DEJAVU_CURRENCY: &[u8] =
+    include_bytes!("../../../assets/fonts/DejaVuSansMono-Currency.ttf");
 
-/// JetBrains Mono first, with egui's own monospace font kept as a fallback
-/// for glyphs it lacks (`₹`, `₩`); the bold family falls back the same way.
+/// JetBrains Mono first, then [`DEJAVU_CURRENCY`]; the bold family falls
+/// back the same way. Proportional text (tooltips) uses the same fonts, so
+/// the whole app is in JetBrains Mono.
 pub(crate) fn install_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
+    let mut fonts = egui::FontDefinitions::empty();
     let tweak = egui::FontTweak {
         y_offset: GLYPH_Y_OFFSET,
         ..Default::default()
@@ -49,16 +56,20 @@ pub(crate) fn install_fonts(ctx: &egui::Context) {
             Arc::new(egui::FontData::from_static(bytes).tweak(tweak.clone())),
         );
     }
-    let monospace = fonts
-        .families
-        .entry(egui::FontFamily::Monospace)
-        .or_default();
-    monospace.insert(0, "JetBrainsMono".to_owned());
-    let mut bold = monospace.clone();
-    bold[0] = "JetBrainsMonoBold".to_owned();
-    fonts
-        .families
-        .insert(egui::FontFamily::Name(BOLD.into()), bold);
+    fonts.font_data.insert(
+        "DejaVuCurrency".to_owned(),
+        Arc::new(egui::FontData::from_static(DEJAVU_CURRENCY)),
+    );
+    let family = |first: &str| vec![first.to_owned(), "DejaVuCurrency".to_owned()];
+    fonts.families = [
+        (egui::FontFamily::Monospace, family("JetBrainsMono")),
+        (egui::FontFamily::Proportional, family("JetBrainsMono")),
+        (
+            egui::FontFamily::Name(BOLD.into()),
+            family("JetBrainsMonoBold"),
+        ),
+    ]
+    .into();
     ctx.set_fonts(fonts);
 }
 
@@ -296,6 +307,15 @@ mod tests {
                 .x
         };
         assert_eq!(width(mono()), width(mono_bold()));
+    }
+
+    /// JetBrains Mono has none of these; the DejaVu subset has them all.
+    #[test]
+    fn dejavu_covers_signs_jetbrains_mono_lacks() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        ctx.begin_pass(egui::RawInput::default());
+        assert!(ctx.fonts_mut(|f| f.has_glyphs(&mono(), "₹₩₺₱₪₦₸₡₲₵₭฿₨")));
     }
 
     /// `±` and `?` have very different ink heights, so a working

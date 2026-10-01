@@ -27,19 +27,7 @@ use chrono_tz::Tz;
 use regex::{Captures, Regex};
 
 use crate::format::CURRENCY_STYLES;
-
-/// What a raw document line is once comments and labels are stripped.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LineKind {
-    /// Empty, or a `//` comment.
-    Blank,
-    /// `# heading`.
-    Header,
-    /// `Label:` with nothing after it.
-    Label,
-    /// An expression for the engine, label and comments removed.
-    Expr(String),
-}
+use crate::LineResult;
 
 /// A `//` comment, to the end of the line. This and the next few are
 /// `pub(crate)` so [`crate::highlight`] colours exactly what this module
@@ -175,18 +163,19 @@ const ZONE_ABBREVIATIONS: &[(&str, &str)] = &[
     ("AEDT", "Australia/Sydney"),
 ];
 
-/// Classify a raw line, stripping its label prefix, `//` comment and
-/// `"quoted notes"` if it's an expression.
-pub fn classify(raw: &str) -> LineKind {
+/// Classify a raw line: an expression for the engine, with its label
+/// prefix, `//` comment and `"quoted notes"` stripped, or the result of a
+/// line that has none (blank, header or label).
+pub(crate) fn classify(raw: &str) -> Result<String, LineResult> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.starts_with("//") {
-        return LineKind::Blank;
+        return Err(LineResult::Blank);
     }
     if trimmed.starts_with('#') {
-        return LineKind::Header;
+        return Err(LineResult::Header);
     }
     if is_label(trimmed) {
-        return LineKind::Label;
+        return Err(LineResult::Label);
     }
     let trimmed = LEADING_LABEL
         .captures(trimmed)
@@ -197,9 +186,9 @@ pub fn classify(raw: &str) -> LineKind {
     expr = INLINE_QUOTED_NOTE.replace_all(&expr, "").into_owned();
     let expr = expr.trim().to_string();
     if expr.is_empty() {
-        return LineKind::Blank;
+        return Err(LineResult::Blank);
     }
-    LineKind::Expr(expr)
+    Ok(expr)
 }
 
 /// A line that's only a label: a trailing `:` with no digits before it
@@ -558,40 +547,34 @@ mod tests {
 
     #[test]
     fn classify_blank_and_comments() {
-        assert_eq!(classify(""), LineKind::Blank);
-        assert_eq!(classify("   "), LineKind::Blank);
-        assert_eq!(classify("// just a comment"), LineKind::Blank);
+        assert_eq!(classify(""), Err(LineResult::Blank));
+        assert_eq!(classify("   "), Err(LineResult::Blank));
+        assert_eq!(classify("// just a comment"), Err(LineResult::Blank));
     }
 
     #[test]
     fn classify_header_and_label() {
-        assert_eq!(classify("# Totals"), LineKind::Header);
-        assert_eq!(classify("Costs:"), LineKind::Label);
+        assert_eq!(classify("# Totals"), Err(LineResult::Header));
+        assert_eq!(classify("Costs:"), Err(LineResult::Label));
     }
 
     #[test]
     fn classify_strips_trailing_and_inline_comments() {
-        assert_eq!(
-            classify("1 + 1 // trailing"),
-            LineKind::Expr("1 + 1".into())
-        );
-        assert_eq!(
-            classify(r#"1 + 1 "inline note""#),
-            LineKind::Expr("1 + 1".into())
-        );
+        assert_eq!(classify("1 + 1 // trailing"), Ok("1 + 1".into()));
+        assert_eq!(classify(r#"1 + 1 "inline note""#), Ok("1 + 1".into()));
     }
 
     #[test]
     fn classify_strips_a_leading_label_in_any_script() {
-        assert_eq!(classify("Price: $7 * 4"), LineKind::Expr("$7 * 4".into()));
-        assert_eq!(classify("Tiền nhà: 1800"), LineKind::Expr("1800".into()));
+        assert_eq!(classify("Price: $7 * 4"), Ok("$7 * 4".into()));
+        assert_eq!(classify("Tiền nhà: 1800"), Ok("1800".into()));
     }
 
     #[test]
     fn classify_label_heuristic() {
-        assert_eq!(classify("Costs:"), LineKind::Label);
-        assert_eq!(classify("Total 5:"), LineKind::Expr("Total 5:".into()));
-        assert_eq!(classify("x: 5"), LineKind::Expr("5".into()));
+        assert_eq!(classify("Costs:"), Err(LineResult::Label));
+        assert_eq!(classify("Total 5:"), Ok("Total 5:".into()));
+        assert_eq!(classify("x: 5"), Ok("5".into()));
     }
 
     #[test]
