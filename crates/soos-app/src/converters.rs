@@ -135,7 +135,6 @@ pub(crate) fn converters_window(
     let rows_height = CONVERTER_ROWS_MAX_HEIGHT
         .min(modal_room(ui.ctx()).y - CONVERTER_CHROME_HEIGHT)
         .max(row_height * 2.0);
-    // Both ways: in a narrow window the table scrolls sideways.
     egui::ScrollArea::both()
         .max_height(rows_height)
         .show(ui, |ui| {

@@ -13,8 +13,8 @@ Three crates:
   `converters` overlays, plus `recalc` (the worker thread documents are
   recalculated on), `hotkey`, `tray`, `update` and `style`.
 - `crates/soos-cli` -- the CLI (`soos-cli '20 inches in cm'`), which prints
-  what the app shows for the same line, and the `--json`/`--alfred` output
-  the launcher integrations use.
+  what the app shows for the same line, and the `--json` output the
+  PowerToys plugin uses.
 
 ## Reading the code
 

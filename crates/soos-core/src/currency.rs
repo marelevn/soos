@@ -100,6 +100,18 @@ struct RateRecord {
     rate: f64,
 }
 
+/// The rates fend can use: positive and finite, since it divides by them.
+/// `None` if none are left, so a broken response counts as a failed refresh
+/// rather than fresh rates for [`STALE_AFTER`].
+fn usable_rates(records: Vec<RateRecord>) -> Option<HashMap<String, f64>> {
+    let rates: HashMap<String, f64> = records
+        .into_iter()
+        .filter(|r| r.rate.is_finite() && r.rate > 0.0)
+        .map(|r| (r.quote, r.rate))
+        .collect();
+    (!rates.is_empty()).then_some(rates)
+}
+
 #[derive(Default)]
 struct RefreshState {
     running: bool,
@@ -139,46 +151,47 @@ impl RateSource {
         let _ = crate::storage::write_atomically(&self.cache_path, json.as_bytes());
     }
 
-    fn refresh_blocking(&self) -> Result<(), String> {
-        let fetched = ureq::get(RATES_URL)
+    fn refresh_blocking(&self) {
+        let rates = ureq::get(RATES_URL)
             .config()
             .timeout_global(Some(FETCH_TIMEOUT))
             .build()
             .call()
-            .map_err(|e| e.to_string())
+            .ok()
             .and_then(|mut response| {
                 response
                     .body_mut()
                     .with_config()
                     .limit(MAX_RESPONSE_BYTES)
                     .read_json::<Vec<RateRecord>>()
-                    .map_err(|e| e.to_string())
-            });
-        let mut cache = self.cache.write().unwrap();
-        match fetched {
-            Ok(records) => {
-                *cache = RateCache {
-                    rates: records.into_iter().map(|r| (r.quote, r.rate)).collect(),
-                    fetched_at_unix: now_unix(),
-                    source_version: CACHE_VERSION,
-                    failed_at_unix: 0,
-                };
-                self.save(&cache);
-                Ok(())
+                    .ok()
+            })
+            .and_then(usable_rates);
+        // Saved after the lock is released: the write syncs to disk, and the
+        // app's UI thread reads the cache every frame.
+        let cache = {
+            let mut cache = self.cache.write().unwrap();
+            match rates {
+                Some(rates) => {
+                    *cache = RateCache {
+                        rates,
+                        fetched_at_unix: now_unix(),
+                        source_version: CACHE_VERSION,
+                        failed_at_unix: 0,
+                    };
+                }
+                None => cache.failed_at_unix = now_unix(),
             }
-            Err(e) => {
-                cache.failed_at_unix = now_unix();
-                self.save(&cache);
-                Err(e)
-            }
-        }
+            cache.clone()
+        };
+        self.save(&cache);
     }
 
     /// For soos-cli: refresh before answering if the cache is stale, unless
     /// a refresh failed in the last [`CLI_RETRY_AFTER_FAILURE`].
     pub fn refresh_if_stale_blocking(&self) {
         if self.cli_should_refresh() {
-            let _ = self.refresh_blocking();
+            self.refresh_blocking();
         }
     }
 
@@ -199,7 +212,7 @@ impl RateSource {
         }
         let this = self.clone();
         std::thread::spawn(move || {
-            let _ = this.refresh_blocking();
+            this.refresh_blocking();
             this.refresh.lock().unwrap().running = false;
             on_done();
         });
@@ -280,6 +293,24 @@ mod tests {
         ctx.set_exchange_rate_handler_v2(seeded(&[("EUR", 1.0), ("USD", 2.0)]));
         let result = fend_core::evaluate("1 USD to EUR", &mut ctx).unwrap();
         assert_eq!(result.get_main_result(), "0.5 EUR");
+    }
+
+    #[test]
+    fn unusable_rates_are_dropped_and_none_left_is_a_failure() {
+        let record = |quote: &str, rate| RateRecord {
+            quote: quote.to_string(),
+            rate,
+        };
+        let rates = usable_rates(vec![
+            record("USD", 1.1),
+            record("GBP", 0.0),
+            record("JPY", -2.0),
+        ])
+        .unwrap();
+        assert_eq!(rates.len(), 1);
+        assert_eq!(rates["USD"], 1.1);
+        assert_eq!(usable_rates(vec![record("GBP", 0.0)]), None);
+        assert_eq!(usable_rates(Vec::new()), None);
     }
 
     #[test]

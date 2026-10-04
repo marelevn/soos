@@ -366,7 +366,7 @@ fn percent_factors(expr: &str) -> String {
 /// Answer a date or time-zone line (`today + 3 days`, `3pm PST in Tokyo`),
 /// or `None` for anything else, which then goes to fend. `now` is the
 /// recalculation's clock.
-pub fn eval_date(expr: &str, now: DateTime<Local>) -> Option<Result<String, String>> {
+pub(crate) fn eval_date(expr: &str, now: DateTime<Local>) -> Option<Result<String, String>> {
     if DATE_WITHOUT_AT.is_match(expr) {
         return Some(Err(
             "write a date with @ in front, like @2026-12-25".to_string()

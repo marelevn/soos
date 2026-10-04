@@ -50,9 +50,10 @@ pub fn shown(result: &LineResult, high_precision: bool) -> Option<Shown> {
                     full: None,
                 });
             }
-            let rounded = match high_precision {
-                false => round_inexact(value),
-                true => None,
+            let rounded = if high_precision {
+                None
+            } else {
+                round_inexact(value)
             };
             Some(Shown {
                 text: group_digits(rounded.as_deref().unwrap_or(value)),
@@ -105,9 +106,10 @@ fn round_inexact(display: &str) -> Option<String> {
         }
         let number: String = chars[start..i].iter().collect();
         let rounded = number.split_once('.').and_then(|(int_part, frac_part)| {
-            let leading_zeros = match int_part.bytes().all(|b| b == b'0') {
-                true => frac_part.bytes().take_while(|&b| b == b'0').count(),
-                false => 0,
+            let leading_zeros = if int_part.bytes().all(|b| b == b'0') {
+                frac_part.bytes().take_while(|&b| b == b'0').count()
+            } else {
+                0
             };
             let decimals = leading_zeros + INEXACT_DECIMALS;
             (frac_part.len() > decimals).then(|| round_half_up(&number, decimals))?
@@ -128,7 +130,7 @@ fn round_inexact(display: &str) -> Option<String> {
 /// more digits (`"1234567 m"` -> `"1,234,567 m"`). A run right after a
 /// letter, digit, `.` or `#` is left alone: a number in another base
 /// (`0x1234`, `3#1012`), an exponent or a fractional part.
-pub fn group_digits(display: &str) -> String {
+pub(crate) fn group_digits(display: &str) -> String {
     let chars: Vec<char> = display.chars().collect();
     let mut out = String::with_capacity(chars.len() + chars.len() / 3);
     let mut i = 0;
@@ -405,7 +407,7 @@ fn unknown_identifier_short(error: &str) -> Option<String> {
 /// A short label for the result column; the full message stays in
 /// [`Shown::error`]. A message no rule matches is kept if it's 20
 /// characters or shorter, and otherwise becomes "can't compute".
-pub fn shorten_error(error: &str) -> String {
+pub(crate) fn shorten_error(error: &str) -> String {
     if let Some(short) = unknown_identifier_short(error) {
         return short;
     }

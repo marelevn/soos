@@ -23,7 +23,6 @@ options:
                      {\"ok\":false,\"error\":...,\"detail\":...}; \"value\" is the
                      result without thousands separators, \"detail\" the full
                      error message
-  --alfred           print an Alfred Script Filter row; always exits 0
   --high-precision   keep every digit instead of rounding currencies
                      (the app's high-precision toggle)
   -h, --help         show this help
@@ -36,7 +35,6 @@ exit status: 0 result, 1 error or nothing to calculate, 2 usage error";
 enum Format {
     Plain,
     Json,
-    Alfred,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -68,7 +66,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Command {
         }
         match arg.as_str() {
             "--json" => format = Format::Json,
-            "--alfred" => format = Format::Alfred,
             "--high-precision" => high_precision = true,
             "-h" | "--help" => return Command::Help,
             "-V" | "--version" => return Command::Version,
@@ -105,7 +102,7 @@ struct Output {
 
 /// Input with nothing to calculate (`shown` is `None`) is an error, so every
 /// call gives one result or one error.
-fn render(format: Format, input: &str, shown: Option<Shown>) -> Output {
+fn render(format: Format, shown: Option<Shown>) -> Output {
     let shown = shown.unwrap_or_else(|| Shown {
         text: "nothing to calculate".to_string(),
         copy: "nothing to calculate".to_string(),
@@ -145,37 +142,7 @@ fn render(format: Format, input: &str, shown: Option<Shown>) -> Output {
                 code,
             }
         }
-        // On a non-zero exit Alfred shows its own error sheet instead of
-        // the row.
-        Format::Alfred => Output {
-            stdout: Some(alfred_json(&shown, input)),
-            stderr: None,
-            code: 0,
-        },
     }
-}
-
-/// One Alfred Script Filter row
-/// (<https://www.alfredapp.com/help/workflows/inputs/script-filter/json/>):
-/// the result, with Enter copying what clicking it in the app copies, or
-/// the error with its full message underneath. No `uid`, so Alfred doesn't
-/// try to learn an order for a single row.
-fn alfred_json(shown: &Shown, input: &str) -> String {
-    let item = match &shown.error {
-        None => serde_json::json!({
-            "title": shown.text,
-            "subtitle": input,
-            "arg": shown.copy,
-            "valid": true,
-            "text": {"copy": shown.copy, "largetype": shown.text},
-        }),
-        Some(detail) => serde_json::json!({
-            "title": shown.text,
-            "subtitle": detail,
-            "valid": false,
-        }),
-    };
-    serde_json::json!({"items": [item]}).to_string()
 }
 
 fn main() -> ExitCode {
@@ -217,7 +184,7 @@ fn main() -> ExitCode {
     let converters = storage::load_converters(&storage::converters_path());
 
     let shown = soos_core::evaluate_one(&input, &converters, &rates, options.high_precision);
-    let output = render(options.format, input.trim(), shown);
+    let output = render(options.format, shown);
     if let Some(stdout) = output.stdout {
         println!("{stdout}");
     }
@@ -292,13 +259,12 @@ mod tests {
 
     #[test]
     fn plain_prints_the_app_text_or_the_label_and_detail() {
-        let ok = render(Format::Plain, "$1234.5 * 2", value("$2,469.00", "$2469.00"));
+        let ok = render(Format::Plain, value("$2,469.00", "$2469.00"));
         assert_eq!(ok.stdout.as_deref(), Some("$2,469.00"));
         assert_eq!(ok.code, 0);
 
         let err = render(
             Format::Plain,
-            "5 metr",
             error("unknown metr", "unknown identifier 'metr'"),
         );
         assert_eq!(err.stdout, None);
@@ -311,13 +277,13 @@ mod tests {
 
     #[test]
     fn json_separates_what_is_shown_from_the_plain_value() {
-        let ok = render(Format::Json, "x", value("$2,469.00", "$2469.00"));
+        let ok = render(Format::Json, value("$2,469.00", "$2469.00"));
         let json: serde_json::Value = serde_json::from_str(ok.stdout.as_deref().unwrap()).unwrap();
         assert_eq!(json["ok"], true);
         assert_eq!(json["result"], "$2,469.00");
         assert_eq!(json["value"], "$2469.00");
 
-        let err = render(Format::Json, "x", error("syntax error", "found ')'"));
+        let err = render(Format::Json, error("syntax error", "found ')'"));
         let json: serde_json::Value = serde_json::from_str(err.stdout.as_deref().unwrap()).unwrap();
         assert_eq!(json["ok"], false);
         assert_eq!(json["error"], "syntax error");
@@ -327,45 +293,10 @@ mod tests {
 
     #[test]
     fn nothing_to_calculate_is_an_error() {
-        let out = render(Format::Json, "# heading", None);
+        let out = render(Format::Json, None);
         let json: serde_json::Value = serde_json::from_str(out.stdout.as_deref().unwrap()).unwrap();
         assert_eq!(json["error"], "nothing to calculate");
         assert_eq!(out.code, 1);
-    }
-
-    #[test]
-    fn alfred_rows_copy_the_plain_value_and_always_exit_zero() {
-        let ok = render(
-            Format::Alfred,
-            "$1234.5 * 2",
-            value("$2,469.00", "$2469.00"),
-        );
-        assert_eq!(ok.code, 0);
-        let json: serde_json::Value = serde_json::from_str(ok.stdout.as_deref().unwrap()).unwrap();
-        let item = &json["items"][0];
-        assert_eq!(item["title"], "$2,469.00");
-        assert_eq!(item["arg"], "$2469.00");
-        assert_eq!(item["subtitle"], "$1234.5 * 2");
-        assert_eq!(item["valid"], true);
-
-        let err = render(
-            Format::Alfred,
-            "1 +",
-            error("syntax error", "expected a value"),
-        );
-        assert_eq!(err.code, 0);
-        let json: serde_json::Value = serde_json::from_str(err.stdout.as_deref().unwrap()).unwrap();
-        let item = &json["items"][0];
-        assert_eq!(item["title"], "syntax error");
-        assert_eq!(item["subtitle"], "expected a value");
-        assert_eq!(item["valid"], false);
-        assert!(item.get("arg").is_none());
-    }
-
-    #[test]
-    fn alfred_json_escapes_quotes_in_the_input() {
-        let out = alfred_json(&value("42", "42").unwrap(), "say \"hi\"");
-        assert!(out.contains("\"subtitle\":\"say \\\"hi\\\"\""));
     }
 
     /// 1 EUR = 1 USD, from a cache file (read once, on construction).
@@ -438,7 +369,7 @@ mod tests {
     fn cli_output_matches_the_app_for_a_real_line() {
         let rates = RateSource::new(std::path::PathBuf::new());
         let shown = soos_core::evaluate_one("Area: 1200 * 3 m^2 // hall", &[], &rates, false);
-        let out = render(Format::Plain, "", shown);
+        let out = render(Format::Plain, shown);
         assert_eq!(out.stdout.as_deref(), Some("3,600 m^2"));
     }
 }

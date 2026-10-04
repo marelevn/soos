@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/soos-core", "crates/soos-app", "crates/soos-cli"]
 
 [workspace.package]
-version = "1.0.3"
+version = "1.0.4"
 edition = "2021"
 # Set by egui/eframe 0.36. Every crate inherits it, and CI's `msrv` job
 # checks the workspace on exactly this version.
@@ -29,6 +29,6 @@ panic = "abort"
 
 # Adds `Code::LaunchApp2`, the Calculator key, which upstream can't register
 # on Windows (Soos has no hotkey on Linux); see CONTRIBUTING.md, "The hotkey
-# patch". Pinned to a commit because a tag can be moved.
+# patch".
 [patch.crates-io]
 global-hotkey = { git = "https://github.com/marelevn/global-hotkey-patched", rev = "073d21fb74188d1ec54fa5a26844e29cd8f86190" }

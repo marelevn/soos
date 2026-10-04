@@ -237,9 +237,10 @@ impl SoosApp {
                             } else {
                                 palette.result
                             };
-                            let color = match stale {
-                                true => color.lerp_to_gamma(palette.background, STALE_DIM),
-                                false => color,
+                            let color = if stale {
+                                color.lerp_to_gamma(palette.background, STALE_DIM)
+                            } else {
+                                color
                             };
                             let row_rect = row.rect().translate(output.galley_pos.to_vec2());
                             let budget = if is_error {

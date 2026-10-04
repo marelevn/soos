@@ -55,6 +55,5 @@ tray-icon = { version = "0.25", default-features = false, features = ["ksni"] }
 # draws a plain grey one instead of the Adwaita-style bar.
 winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
 
-# For the Windows .exe icon; see build.rs.
 [build-dependencies]
 winresource = "0.1"

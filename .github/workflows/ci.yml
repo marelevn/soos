@@ -1,14 +1,10 @@
 name: CI
 
-# Actions are pinned to commits, since a tag can be moved; the comment
-# names the release.
-
 on:
   push:
     branches: [main]
   pull_request:
 
-# Every job only reads the code, so the token gets nothing more.
 permissions:
   contents: read
 
@@ -20,6 +16,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: stable
@@ -28,31 +26,31 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --locked --all-targets -- -D warnings
+      - run: cargo test --workspace --locked
 
-  # Rustdoc with warnings as errors, so a link to a renamed item fails,
-  # and the Markdown check.
   docs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: stable
       - name: Linux GUI build dependencies
         run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
-      - run: cargo doc --workspace --no-deps --document-private-items
+      - run: cargo doc --workspace --locked --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
-      # Broken Markdown links and anchors, and placeholders left behind.
       - run: python3 scripts/check-docs.py
 
-  # Builds on the `rust-version` read from Cargo.toml.
   msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - id: msrv
         run: echo "version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master

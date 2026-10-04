@@ -119,8 +119,8 @@ the exchange rates and today's date will differ.
   extension) show no tray. Cmd/Ctrl +/-/0 zooms the text.
 - **`soos-cli`** for terminals and scripts: `soos-cli '20 inches in cm'`
   prints what the app shows beside that line, using the app's rates and
-  your converters. An Alfred workflow and a PowerToys Run plugin are thin
-  shells over it -- see [Extra guides](#extra-guides).
+  your converters. A PowerToys Run plugin is a thin shell over it -- see
+  [Extra guides](#extra-guides).
 
 ## How it calculates
 
@@ -200,7 +200,6 @@ ignored, as in the app.
 | Option | What it does |
 |---|---|
 | `--json` | One line of JSON (keys in alphabetical order): `{"ok":true,"result":"$2,469.00","value":"$2469.00"}` or `{"detail":"unknown identifier 'metr'","error":"unknown metr","ok":false}`. `result` is what the app shows, `value` what clicking it in the app copies (no thousands separators or `≈`; a currency keeps its symbol), `detail` the full error message (the app's hover text). |
-| `--alfred` | An Alfred Script Filter row. Always exits 0. |
 | `--high-precision` | Keep every digit instead of rounding currencies -- the app's `±` toggle. |
 | `-h`, `--help` / `-V`, `--version` | Help / version. |
 | `--` | Everything after it is the expression, even if it starts with `--`. |
@@ -391,40 +390,10 @@ code page, so set this first or the symbols come out garbled:
 </details>
 
 <details>
-<summary><b>Alfred workflow (macOS)</b></summary>
+<summary><b>Alfred (macOS)</b></summary>
 
-Type `=` and an expression in Alfred; the answer appears as a row, exactly
-as the app would show it. Enter copies the plain value (no thousands
-separators), like clicking a result in the app. Needs Alfred with the
-Powerpack.
-
-1. Set up `soos-cli` (see **soos-cli on macOS** above). The workflow finds
-   it inside `/Applications/Soos.app` (or `~/Applications/Soos.app`) on its
-   own; a `soos-cli` in `/opt/homebrew/bin` or `/usr/local/bin` is used first
-   if present.
-2. Build the workflow from a clone of this repository:
-
-   ```
-   integrations/alfred/build.sh
-   ```
-
-3. Double-click `integrations/alfred/soos.alfredworkflow` and choose
-   **Import**.
-4. In Alfred: `=20 inches in cm`, `=$840 * 2`, `=3pm PST in Tokyo`.
-
-**Troubleshooting.**
-
-- *"soos-cli not found":* Soos isn't in `/Applications` or
-  `~/Applications`, and there's no `soos-cli` in the other places above.
-  Alfred runs scripts with a minimal `PATH`, so your shell's `PATH` doesn't
-  count.
-- *Nothing happens, or macOS says it "can't be opened":* run the
-  `xattr -cr /Applications/Soos.app` command from the macOS guide.
-- *Currency rows say `no rates yet`:* converting between currencies needs
-  rates, which couldn't be fetched and aren't cached yet -- open the app
-  once while online.
-- *A converter from the app isn't recognised:* open and close the app's
-  converters window (`↔`) so it saves them for `soos-cli`.
+On macOS, use Raycast or Quicksilver, which calculate on their own: Raycast
+out of the box, Quicksilver with its Calculator plugin.
 
 </details>
 

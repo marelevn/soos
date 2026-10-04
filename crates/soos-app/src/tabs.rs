@@ -83,9 +83,10 @@ pub(crate) fn tab_width(strip_width: f32, tabs: usize, plus: bool) -> f32 {
 /// moves when it appears.
 pub(crate) fn title_room(tab: egui::Rect) -> egui::Rect {
     let close_side = CLOSE_EDGE_PAD + CLOSE_SIZE + CLOSE_GAP;
-    let (left, right) = match CLOSE_ON_LEADING_EDGE {
-        true => (close_side, TAB_H_PAD),
-        false => (TAB_H_PAD, close_side),
+    let (left, right) = if CLOSE_ON_LEADING_EDGE {
+        (close_side, TAB_H_PAD)
+    } else {
+        (TAB_H_PAD, close_side)
     };
     let min_x = tab.left() + left;
     let max_x = (tab.right() - right).max(min_x);
@@ -144,9 +145,10 @@ pub(crate) fn tab_label(
     close_shortcut: &str,
 ) -> TabClicks {
     let response = ui.interact(rect, id, egui::Sense::click());
-    let close_centre = match CLOSE_ON_LEADING_EDGE {
-        true => rect.left() + CLOSE_EDGE_PAD + CLOSE_SIZE / 2.0,
-        false => rect.right() - CLOSE_EDGE_PAD - CLOSE_SIZE / 2.0,
+    let close_centre = if CLOSE_ON_LEADING_EDGE {
+        rect.left() + CLOSE_EDGE_PAD + CLOSE_SIZE / 2.0
+    } else {
+        rect.right() - CLOSE_EDGE_PAD - CLOSE_SIZE / 2.0
     };
     let close_rect = egui::Rect::from_center_size(
         egui::pos2(close_centre, rect.center().y),
@@ -171,11 +173,12 @@ pub(crate) fn tab_label(
     let room = title_room(rect);
     let (shown, elided) = fit_title(title, room.width());
     let galley = ui.fonts_mut(|f| f.layout_no_wrap(shown, mono(), Color32::PLACEHOLDER));
-    let color = match active {
-        true => palette.plain,
-        false => palette
+    let color = if active {
+        palette.plain
+    } else {
+        palette
             .secondary
-            .lerp_to_gamma(palette.plain, hover_t * HOVER_BRIGHTEN),
+            .lerp_to_gamma(palette.plain, hover_t * HOVER_BRIGHTEN)
     };
     let text_pos = egui::pos2(
         room.center().x - galley.size().x / 2.0,
@@ -195,9 +198,10 @@ pub(crate) fn tab_label(
         }
         let close_galley =
             ui.fonts_mut(|f| f.layout_no_wrap("\u{d7}".to_owned(), mono(), Color32::PLACEHOLDER));
-        let close_color = match close.hovered() {
-            true => palette.plain,
-            false => palette.comment,
+        let close_color = if close.hovered() {
+            palette.plain
+        } else {
+            palette.comment
         };
         let close_pos = close_rect.center() - close_galley.size() / 2.0
             + egui::vec2(0.0, ink_center_offset(&close_galley));
@@ -205,9 +209,10 @@ pub(crate) fn tab_label(
             .galley_with_override_text_color(close_pos, close_galley, close_color);
     }
 
-    let response = match elided {
-        true => response.on_hover_text(title),
-        false => response,
+    let response = if elided {
+        response.on_hover_text(title)
+    } else {
+        response
     };
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, title)
@@ -476,9 +481,10 @@ mod tests {
         let reserved = TAB_H_PAD + CLOSE_EDGE_PAD + CLOSE_SIZE + CLOSE_GAP;
         let room = title_room(tab(200.0));
         assert_eq!(room.width(), 200.0 - reserved);
-        let room_left = match CLOSE_ON_LEADING_EDGE {
-            true => 100.0 + CLOSE_EDGE_PAD + CLOSE_SIZE + CLOSE_GAP,
-            false => 100.0 + TAB_H_PAD,
+        let room_left = if CLOSE_ON_LEADING_EDGE {
+            100.0 + CLOSE_EDGE_PAD + CLOSE_SIZE + CLOSE_GAP
+        } else {
+            100.0 + TAB_H_PAD
         };
         assert_eq!(room.left(), room_left);
         assert_eq!(title_room(tab(10.0)).width(), 0.0);

@@ -103,7 +103,7 @@ namespace Community.PowerToys.Run.Plugin.Soos
                 var detail = root.TryGetProperty("detail", out var d) ? d.GetString() ?? search : search;
                 return Single(error, detail, string.Empty, false);
             }
-            catch (JsonException)
+            catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException)
             {
                 return Single("soos-cli gave an unexpected answer", "Check that SOOS_EXE points at soos-cli.exe.", string.Empty, false);
             }

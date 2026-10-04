@@ -99,9 +99,10 @@ impl Recalculator {
         let deadline = Instant::now() + wait;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            let done = match remaining.is_zero() {
-                true => self.done.try_recv().ok()?,
-                false => self.done.recv_timeout(remaining).ok()?,
+            let done = if remaining.is_zero() {
+                self.done.try_recv().ok()?
+            } else {
+                self.done.recv_timeout(remaining).ok()?
             };
             if done.generation == generation {
                 return Some(done);

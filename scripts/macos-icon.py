@@ -36,8 +36,7 @@ def mac_icon(logo):
     # antialiased edge, since the new corner cuts deeper anyway.
     left, top, right, bottom = logo.getchannel("A").point(lambda a: 255 if a >= 128 else 0).getbbox()
     inset = 3
-    # getbbox's right and bottom are exclusive, one past the last pixel.
-    body = logo.crop((left + inset, top + inset, right - 1 - inset, bottom - 1 - inset))
+    body = logo.crop((left + inset, top + inset, right - inset, bottom - inset))
     body = body.resize((BODY, BODY), Image.LANCZOS)
     body.putalpha(rounded_mask(BODY))
 
