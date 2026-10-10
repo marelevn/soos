@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="228" viewBox="0 0 360 228" role="img" aria-labelledby="title desc">
+<title id="title">Soos example: units</title>
+<desc id="desc">20 sq cm  20 cm^2
+30 square inches  30 inches^2
+20 cu cm  20 cm^3
+11 cbm  11 m^3
+5 ft 11 in to cm  180.34 cm
+20 inches in cm  50.8 cm
+16 px in pt  12 pt</desc>
+<rect x="0.5" y="0.5" width="359" height="227" rx="10" fill="#222428" stroke="#3a3d42"/>
+<circle cx="20" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="38" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="56" cy="17" r="6" fill="#4a4d52"/>
+<text x="180" y="22" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#959aa2">Soos</text>
+<text x="22" y="56" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">20 sq cm</tspan></text>
+<text x="338" y="56" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">20 cm^2</text>
+<text x="22" y="81" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">30 square inches</tspan></text>
+<text x="338" y="81" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">30 inches^2</text>
+<text x="22" y="106" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">20 cu cm</tspan></text>
+<text x="338" y="106" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">20 cm^3</text>
+<text x="22" y="131" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">11 cbm</tspan></text>
+<text x="338" y="131" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">11 m^3</text>
+<text x="22" y="156" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">5 ft 11 </tspan><tspan fill="#b8bcc3">in</tspan><tspan fill="#f0f0f0"> </tspan><tspan fill="#b8bcc3">to</tspan><tspan fill="#f0f0f0"> cm</tspan></text>
+<text x="338" y="156" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">180.34 cm</text>
+<text x="22" y="181" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">20 inches </tspan><tspan fill="#b8bcc3">in</tspan><tspan fill="#f0f0f0"> cm</tspan></text>
+<text x="338" y="181" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">50.8 cm</text>
+<text x="22" y="206" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">16 px </tspan><tspan fill="#b8bcc3">in</tspan><tspan fill="#f0f0f0"> pt</tspan></text>
+<text x="338" y="206" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">12 pt</text>
+</svg>

@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="428" viewBox="0 0 360 428" role="img" aria-labelledby="title desc">
+<title id="title">Soos example: operators</title>
+<desc id="desc">4 plus 4  8
+4 with 4  8
+4 and 4  8
+
+9 minus 4  5
+9 subtract 4  5
+9 without 4  5
+
+4 times 3  12
+4 multiplied by 3  12
+4 mul 3  12
+
+12 divide 4  3
+12 divide by 4  3
+12 divided by 4  3</desc>
+<rect x="0.5" y="0.5" width="359" height="427" rx="10" fill="#222428" stroke="#3a3d42"/>
+<circle cx="20" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="38" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="56" cy="17" r="6" fill="#4a4d52"/>
+<text x="180" y="22" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#959aa2">Soos</text>
+<text x="22" y="56" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 </tspan><tspan fill="#b8bcc3">plus</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="56" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">8</text>
+<text x="22" y="81" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 </tspan><tspan fill="#b8bcc3">with</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="81" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">8</text>
+<text x="22" y="106" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 </tspan><tspan fill="#b8bcc3">and</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="106" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">8</text>
+<text x="22" y="156" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">9 </tspan><tspan fill="#b8bcc3">minus</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="156" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">5</text>
+<text x="22" y="181" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">9 </tspan><tspan fill="#b8bcc3">subtract</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="181" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">5</text>
+<text x="22" y="206" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">9 </tspan><tspan fill="#b8bcc3">without</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="206" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">5</text>
+<text x="22" y="256" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 </tspan><tspan fill="#b8bcc3">times</tspan><tspan fill="#f0f0f0"> 3</tspan></text>
+<text x="338" y="256" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">12</text>
+<text x="22" y="281" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 </tspan><tspan fill="#b8bcc3">multiplied by</tspan><tspan fill="#f0f0f0"> 3</tspan></text>
+<text x="338" y="281" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">12</text>
+<text x="22" y="306" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 </tspan><tspan fill="#b8bcc3">mul</tspan><tspan fill="#f0f0f0"> 3</tspan></text>
+<text x="338" y="306" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">12</text>
+<text x="22" y="356" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">12 </tspan><tspan fill="#b8bcc3">divide</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="356" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">3</text>
+<text x="22" y="381" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">12 </tspan><tspan fill="#b8bcc3">divide by</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="381" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">3</text>
+<text x="22" y="406" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">12 </tspan><tspan fill="#b8bcc3">divided by</tspan><tspan fill="#f0f0f0"> 4</tspan></text>
+<text x="338" y="406" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">3</text>
+</svg>

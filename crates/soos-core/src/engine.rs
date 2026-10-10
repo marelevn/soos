@@ -7,7 +7,10 @@ use std::sync::{Arc, LazyLock};
 use chrono::{DateTime, Local};
 use regex::Regex;
 
-use crate::preprocess;
+use crate::error::LineError;
+use crate::preprocess::{self, CONVERT_KW};
+
+mod guard;
 
 /// One successful line: what to show, and what `prev`/`sum`/`avg` may feed
 /// back into fend. They differ where the display has parts fend can't read
@@ -109,7 +112,7 @@ fn expr_nesting_depth(expr: &str) -> Option<usize> {
 }
 
 /// [`eval_line_at`] against the current time.
-pub(crate) fn eval_line(ctx: &mut fend_core::Context, expr: &str) -> Result<Evaluated, String> {
+pub(crate) fn eval_line(ctx: &mut fend_core::Context, expr: &str) -> Result<Evaluated, LineError> {
     eval_line_at(ctx, expr, Local::now())
 }
 
@@ -119,7 +122,7 @@ pub(crate) fn eval_line_at(
     ctx: &mut fend_core::Context,
     expr: &str,
     now: DateTime<Local>,
-) -> Result<Evaluated, String> {
+) -> Result<Evaluated, LineError> {
     if let Some(date) = preprocess::eval_date(expr, now) {
         return date.map(|display| Evaluated {
             display,
@@ -127,23 +130,48 @@ pub(crate) fn eval_line_at(
             exact: true,
         });
     }
+    let (expr, scientific) = match SCI_TARGET.find(expr) {
+        Some(target) => (&expr[..target.start()], true),
+        None => (expr, false),
+    };
     let rewritten = preprocess::rewrite(expr);
+    if STRAY_CLOCK.is_match(&rewritten.expr) {
+        return Err(LineError::own(
+            "a time of day works alone, plus or minus minutes or hours, or minus another time",
+            "unsupported time",
+        ));
+    }
     match expr_nesting_depth(&rewritten.expr) {
         Some(depth) if depth <= MAX_EXPR_NESTING_DEPTH => {}
-        Some(_) => return Err("too nested".to_string()),
-        None => return Err("too long".to_string()),
+        Some(_) => return Err(LineError::plain("too nested")),
+        None => return Err(LineError::TooLong),
     }
+    guard::check(ctx, &rewritten.expr)?;
     let deadline = Deadline::new(EVAL_TIMEOUT);
     if let Some(var) = &rewritten.percent_var {
         let held = fend_core::evaluate_with_interrupt(var, ctx, &deadline)?;
         if !held.get_main_result().ends_with('%') {
-            return Err(format!(
-                "'{var}' is not a percent; 'on' needs one, like fee = 8%"
+            return Err(LineError::own(
+                format!("'{var}' is not a percent; 'on' needs one, like fee = 8%"),
+                "not a percent",
             ));
         }
     }
-    let r = fend_core::evaluate_with_interrupt(&rewritten.expr, ctx, &deadline)
-        .map_err(explain_date_words)?;
+    let r = match fend_core::evaluate_with_interrupt(&rewritten.expr, ctx, &deadline) {
+        Ok(r) => r,
+        Err(error) => {
+            let retried = plain_terms_in_unit(&rewritten.expr, &error).and_then(|tagged| {
+                fend_core::evaluate_with_interrupt(&tagged, ctx, &deadline).ok()
+            });
+            match retried {
+                Some(r) => r,
+                None => {
+                    return Err(explain_percent_sum(&rewritten.expr, &error)
+                        .unwrap_or_else(|| explain_date_words(error)))
+                }
+            }
+        }
+    };
     let raw = match base_prefix(&rewritten.expr) {
         Some(prefix) => with_base_prefix(r.get_main_result(), &prefix),
         None => r.get_main_result().to_string(),
@@ -162,6 +190,9 @@ pub(crate) fn eval_line_at(
         .unwrap_or(raw)
         .to_string();
     let mut display = crate::format::approx_symbol(raw);
+    if scientific {
+        display = to_scientific(&display);
+    }
     if rewritten.as_percent && !display.is_empty() {
         display.push('%');
     }
@@ -172,12 +203,168 @@ pub(crate) fn eval_line_at(
     })
 }
 
+/// fend's refusal to add a plain number to a unit (`$5 + 1`, `5 m + 1`) names
+/// the unit, either side. Reads the line again with each plain term (only
+/// digits, operators and parentheses) of its sum written in that unit, as
+/// `sum` counts the plain numbers of a block. A conversion on the end
+/// (`$5 + 1 in EUR`) is left as it is, and so is a sum with no unit in it
+/// (`3 + 4 in m` is still an error). `None` if the error is another one or
+/// nothing was changed, so the caller reports fend's own message.
+fn plain_terms_in_unit(expr: &str, error: &str) -> Option<String> {
+    static MISMATCH: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r"^cannot convert from (?:unitless to (?P<to>[^:]+)|(?P<from>[^:]+) to unitless):",
+        )
+        .unwrap()
+    });
+    let caps = MISMATCH.captures(error)?;
+    let unit = caps
+        .name("to")
+        .or_else(|| caps.name("from"))?
+        .as_str()
+        .trim();
+    let unit = if unit.contains(' ') {
+        format!("({unit})")
+    } else {
+        unit.to_string()
+    };
+    let (sum, conversion) = preprocess::split_conversion(expr);
+    tag_plain_terms(sum, &unit).map(|tagged| format!("{tagged}{conversion}"))
+}
+
+/// What is inside `term` when it is one parenthesised group: `5 m + 1` in
+/// `(5 m + 1)`, but not in `(1) + (2)`.
+fn group_inside(term: &str) -> Option<&str> {
+    let inner = term.trim().strip_prefix('(')?.strip_suffix(')')?;
+    let mut depth = 0usize;
+    for b in inner.bytes() {
+        match b {
+            b'(' => depth += 1,
+            b')' => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+    }
+    (depth == 0).then_some(inner)
+}
+
+/// `expr` with the plain terms of its sum written in `unit`, looking inside
+/// a parenthesised term too. `None` if no term was changed, or no term has a
+/// unit of its own for the plain ones to join.
+fn tag_plain_terms(expr: &str, unit: &str) -> Option<String> {
+    // The `+` and `-` that join terms: not a sign (`2 * -1`, a leading `-`),
+    // not an exponent's (`1e-5`), and not inside parentheses.
+    let bytes = expr.as_bytes();
+    let mut bounds = vec![0];
+    let mut depth = 0usize;
+    let mut prev: Option<u8> = None;
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => depth = depth.saturating_sub(1),
+            b'+' | b'-' if depth == 0 => {
+                let exponent = i >= 2
+                    && matches!(bytes[i - 1], b'e' | b'E')
+                    && (bytes[i - 2].is_ascii_digit() || bytes[i - 2] == b'.');
+                if prev.is_some_and(|p| !b"+-*/^(=<>,".contains(&p)) && !exponent {
+                    bounds.push(i);
+                }
+            }
+            _ => {}
+        }
+        if !b.is_ascii_whitespace() {
+            prev = Some(b);
+        }
+    }
+    bounds.push(expr.len());
+
+    let is_plain = |term: &str| {
+        let term = term.trim().trim_start_matches(['-', '+']);
+        term.bytes().any(|b| b.is_ascii_digit())
+            && term
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b" .,*/^()+-eE".contains(&b))
+    };
+    let mut out = String::with_capacity(expr.len() + 16);
+    let mut tagged = false;
+    let mut has_unit = false;
+    for (n, bound) in bounds.windows(2).enumerate() {
+        let segment = &expr[bound[0]..bound[1]];
+        let (op, term) = if n == 0 {
+            ("", segment)
+        } else {
+            segment.split_at(1)
+        };
+        out.push_str(op);
+        if is_plain(term) {
+            tagged = true;
+            out.push_str(&format!(" ({}) {unit}", term.trim()));
+        } else if let Some(inner) = group_inside(term).and_then(|g| tag_plain_terms(g, unit)) {
+            tagged = true;
+            has_unit = true;
+            out.push_str(&format!(" ({inner})"));
+        } else {
+            has_unit = true;
+            out.push_str(term);
+        }
+    }
+    (tagged && has_unit).then_some(out)
+}
+
+/// A time of day that [`preprocess`] didn't answer or turn into a duration
+/// (`3PM * 2`). fend has no `AM` or `PM`, so without this the line would say
+/// `unknown PM`. Lowercase `am` and `pm` are fend's attometre and picometre,
+/// and pass through as lengths.
+static STRAY_CLOCK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b\d+(?:\.\d+)?\s*(?:AM|PM)\b").unwrap());
+
+/// A trailing `in sci`, which fend has no word for. Cut off before the
+/// line is rewritten, so a percent phrase doesn't take it into its operand.
+static SCI_TARGET: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(
+        r"(?i)\s+(?:{CONVERT_KW})\s+(?:sci|scientific)\s*$"
+    ))
+    .unwrap()
+});
+
+/// The first number in `display` as a mantissa and a power of ten
+/// (`5300 m` is `5.3e3 m`). It works on the digits, so nothing is rounded,
+/// and fend reads the result back.
+fn to_scientific(display: &str) -> String {
+    static NUMBER: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?P<int>[0-9]+)(?:\.(?P<frac>[0-9]+))?").unwrap());
+    let Some(caps) = NUMBER.captures(display) else {
+        return display.to_string();
+    };
+    let int = &caps["int"];
+    let digits = format!("{int}{}", caps.name("frac").map_or("", |m| m.as_str()));
+    let significant = digits.trim_start_matches('0');
+    if significant.is_empty() {
+        return display.to_string();
+    }
+    let exponent = int.len() as i64 - (digits.len() - significant.len()) as i64 - 1;
+    let (first, rest) = significant.trim_end_matches('0').split_at(1);
+    let mantissa = if rest.is_empty() {
+        first.to_string()
+    } else {
+        format!("{first}.{rest}")
+    };
+    let number = caps.get(0).unwrap();
+    format!(
+        "{}{mantissa}e{exponent}{}",
+        &display[..number.start()],
+        &display[number.end()..]
+    )
+}
+
 /// A line ending in a conversion to another base, in fend's words for one
 /// (fend-core's `ast.rs`) or with its `base N`.
 static BASE_TARGET: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(concat!(
-        r"(?i)\b(?:in|to|as)\s+(?:(?P<word>bin|binary|ternary|senary|seximal|oct|octal|dec|decimal|hex|hexadecimal)",
-        r"|base\s*\(?\s*(?P<n>\d{1,2})\s*\)?)\s*$",
+    Regex::new(&format!(
+        concat!(
+            r"(?i)\b(?:{kw})\s+(?:(?P<word>bin|binary|ternary|senary|seximal|oct|octal|dec|decimal|hex|hexadecimal)",
+            r"|base\s*\(?\s*(?P<n>\d{{1,2}})\s*\)?)\s*$",
+        ),
+        kw = CONVERT_KW,
     ))
     .unwrap()
 });
@@ -239,19 +426,44 @@ pub(crate) fn remember_last(ctx: &mut fend_core::Context, name: &str) -> bool {
     fend_core::evaluate_with_interrupt(&format!("{name} = _"), ctx, &deadline).is_ok()
 }
 
-/// A date word inside a larger expression reaches fend, which can't
-/// read the clock, so say which forms work instead.
-fn explain_date_words(error: String) -> String {
+/// A percent beside an amount (`$100 - 15%`, `fee = 8%` then `$100 - fee`) is
+/// fend's unit mismatch with `%` as one of its two sides. The words for
+/// adding and taking off a percent are `on` and `off`. A conversion to a
+/// percent (`5 EUR in %`) is a mismatch of its own, so it keeps fend's.
+fn explain_percent_sum(expr: &str, error: &str) -> Option<LineError> {
+    static PERCENT_SIDE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^cannot convert from (?:% to [^:]+|[^:]+ to %):").unwrap());
+    static CONVERT_TO_PERCENT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(&format!(r"\b(?:{CONVERT_KW})\s+%")).unwrap());
+    let beside_an_amount = PERCENT_SIDE.is_match(error)
+        && expr.contains(['+', '-'])
+        && !CONVERT_TO_PERCENT.is_match(expr);
+    beside_an_amount.then(|| {
+        LineError::own(
+            "a percent can't be added to or taken from an amount; use on or off, like 15% off $100",
+            "needs on or off",
+        )
+    })
+}
+
+/// A date word inside a larger expression reaches fend, which can't read
+/// the clock, and a `before` or `after` that isn't `3 days before 15 nov`
+/// reaches it as a name. Say which forms work instead.
+fn explain_date_words(error: String) -> LineError {
     match error.as_str() {
         "unknown identifier 'today'"
         | "unknown identifier 'tomorrow'"
         | "unknown identifier 'yesterday'"
         | "unknown identifier 'now'"
-        | "unable to get the current date" => {
-            "today, tomorrow and now only work alone, with + or - (now + 2 hours), or with a zone (now in Tokyo)"
-                .to_string()
-        }
-        _ => error,
+        | "unable to get the current date" => LineError::own(
+            "today, tomorrow and now only work alone, plus or minus a whole number of minutes, hours, days, weeks, months or years (now + 2 hours), or with a zone (now in Tokyo)",
+            "unsupported date",
+        ),
+        "unknown identifier 'before'" | "unknown identifier 'after'" => LineError::own(
+            "before and after take a whole number of days and a date, like 3 days before 15 nov",
+            "needs a date",
+        ),
+        _ => LineError::Fend(error),
     }
 }
 
@@ -267,9 +479,9 @@ pub(crate) fn define_unit(ctx: &mut fend_core::Context, name: &str, definition: 
 }
 
 /// CSS and typography units, from the CSS reference pixel (1px = 1/96 in)
-/// and the default root font size (16px). `pt`, `rem` and `ch` replace
-/// fend's pint, roentgen-equivalent-man and chain; the README's calculation
-/// rules say so.
+/// and the default root font size (16px). `pt`, `pc`, `rem` and `ch` replace
+/// fend's pint, parsec, roentgen equivalent man and chain; `pint`, `parsec`
+/// and `chain` still name three of them.
 const CSS_UNITS: &[(&str, &str)] = &[
     ("px", "1/96 inch"),
     ("pt", "1/72 inch"),
@@ -286,12 +498,42 @@ pub(crate) fn register_builtin_units(ctx: &mut fend_core::Context) {
     }
 }
 
+/// `root 3 (27)`: fend has no nth root, but its functions curry, so
+/// `root 3` is a function still waiting for the number. The power of a
+/// negative number is complex, so [`preprocess::rewrite`] sends an odd root
+/// to `__soos_real_root`: the real root of the positive part of `x`, less
+/// that of its negative part, which needs no branch and is 0 at 0.
+pub(crate) fn register_root(ctx: &mut fend_core::Context) {
+    let _ = fend_core::evaluate(r"root = \n.\x. x^(1/n)", ctx);
+    let _ = fend_core::evaluate(
+        r"__soos_real_root = \n.\x. ((abs(x) + x)/2)^(1/n) - ((abs(x) - x)/2)^(1/n)",
+        ctx,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn eval(ctx: &mut fend_core::Context, expr: &str) -> Result<String, String> {
-        eval_line(ctx, expr).map(|e| e.display)
+        eval_line(ctx, expr)
+            .map(|e| e.display)
+            .map_err(|e| e.to_string())
+    }
+
+    /// fend can't be interrupted inside a long shift, a die or a unit's big
+    /// power, so they are refused before it runs -- see [`guard`].
+    #[test]
+    fn lines_fend_cannot_interrupt_are_refused_before_fend_runs() {
+        let mut ctx = fend_core::Context::new();
+        for (expr, message) in [
+            ("4 << 100000000", guard::SHIFT_TOO_LARGE),
+            ("cm^400000 kg", guard::POWER_TOO_LARGE),
+            ("d1000 + d1000", "dice like 4d6 aren't supported"),
+        ] {
+            assert_eq!(eval(&mut ctx, expr), Err(message.to_string()), "{expr}");
+        }
+        assert_eq!(eval(&mut ctx, "4 << 5"), Ok("128".to_string()));
     }
 
     /// Lines fend reads differently from how people mean them.
@@ -306,8 +548,103 @@ mod tests {
             ("50% * 50%", "25%"),
             ("5 ft 11 in in cm", "180.34 cm"),
             ("3 in + 2 in", "5 inches"),
+            ("1 ft in in", "12 inches"),
+            ("2.54 cm to in", "1 inch"),
         ] {
             assert_eq!(eval(&mut ctx, expr), Ok(shown.to_string()), "{expr}");
+        }
+    }
+
+    /// An odd root of a negative number is real, where the power is complex.
+    #[test]
+    fn odd_roots_of_negative_numbers_are_real() {
+        let mut ctx = fend_core::Context::new();
+        register_root(&mut ctx);
+        for (expr, shown) in [
+            ("root 3 (-8)", "-2"),
+            ("cbrt(-8)", "-2"),
+            ("cbrt 27", "3"),
+            ("root 5 (-32)", "-2"),
+            ("root 3 (0)", "0"),
+            ("root 3 (-27 m^3)", "-3 m"),
+            ("root 2 (16)", "4"),
+            ("root 4 (16)", "2"),
+            ("sqrt(-4)", "\u{2248} 0 + 2i"),
+        ] {
+            assert_eq!(eval(&mut ctx, expr), Ok(shown.to_string()), "{expr}");
+        }
+    }
+
+    /// A time is written `AM` or `PM`, so one that isn't a plain time of day
+    /// or a difference must not reach fend, which has no such unit.
+    #[test]
+    fn a_time_of_day_never_becomes_a_length() {
+        let mut ctx = fend_core::Context::new();
+        for (expr, shown) in [
+            ("(3PM - 10AM) * 2", "10 hours"),
+            ("3PM - 10AM + 1 hour", "6 hours"),
+            ("3PM - 10AM in minutes", "300 minutes"),
+        ] {
+            assert_eq!(eval(&mut ctx, expr), Ok(shown.to_string()), "{expr}");
+        }
+        for expr in ["3PM * 2", "3PM + 10AM", "3.5PM", "5PM in m", "t3 = 3PM"] {
+            let err = eval(&mut ctx, expr).unwrap_err();
+            assert!(err.contains("a time of day works alone"), "{expr}: {err}");
+        }
+    }
+
+    /// Lowercase `am` and `pm` are fend's attometre and picometre, in any
+    /// line: only the capitals `AM` and `PM` are a time of day.
+    #[test]
+    fn lowercase_am_and_pm_are_lengths() {
+        let mut ctx = fend_core::Context::new();
+        for (expr, shown) in [
+            ("74 pm in nm", "0.074 nm"),
+            ("1000 pm to nm", "1 nm"),
+            ("3pm * 2", "6 pm"),
+            ("5 pm in m", "0.000000000005 m"),
+            ("1 Pm to km", "1000000000000 km"),
+        ] {
+            assert_eq!(eval(&mut ctx, expr), Ok(shown.to_string()), "{expr}");
+        }
+    }
+
+    /// A plain number added to a unit takes that unit, as in a `sum` block.
+    #[test]
+    fn a_plain_number_joins_a_unit_it_is_added_to() {
+        let mut ctx = fend_core::Context::new();
+        for (expr, shown) in [
+            ("5 m + 1", "6 m"),
+            ("1 + 5 m", "6 m"),
+            ("5 m - 1", "4 m"),
+            ("5 m * 2 + 1", "11 m"),
+            ("5 m + 1 * 2", "7 m"),
+            ("(1 + 1) + 5 m", "7 m"),
+            ("5 m + 1e-3", "5.001 m"),
+            // With a conversion on the end, or inside parentheses.
+            ("5 m + 1 in cm", "600 cm"),
+            ("1 + 5 m to cm", "600 cm"),
+            ("(5 m + 1) in cm", "600 cm"),
+            ("((5 m) + (1)) in cm", "600 cm"),
+            // A unit with spaces in it still reads back (fend names it newtons).
+            ("5 kg m / s^2 + 1", "6 newtons"),
+        ] {
+            assert_eq!(eval(&mut ctx, expr), Ok(shown.to_string()), "{expr}");
+        }
+        let _ = eval(&mut ctx, "rent = 1800 m");
+        assert_eq!(eval(&mut ctx, "rent + 50"), Ok("1850 m".to_string()));
+        // The assignment keeps the sum, not the failed first reading.
+        let _ = eval(&mut ctx, "x = 5 m + 1");
+        assert_eq!(eval(&mut ctx, "x * 2"), Ok("12 m".to_string()));
+    }
+
+    /// Two different units, or a conversion, are still the error fend gives.
+    #[test]
+    fn a_plain_number_does_not_hide_a_real_mismatch() {
+        let mut ctx = fend_core::Context::new();
+        for expr in ["5 m + 1 kg", "5 in m", "3 + 4 in m", "5 m + 1 + 2 kg"] {
+            let err = eval(&mut ctx, expr).unwrap_err();
+            assert!(err.starts_with("cannot convert from"), "{expr}: {err}");
         }
     }
 
@@ -426,6 +763,33 @@ mod tests {
         assert_eq!(eval(&mut ctx, &deep), Err("too nested".to_string()));
     }
 
+    /// A percent beside an amount says to use `on` or `off`; a mismatch that
+    /// is about something else, or a conversion to a percent, keeps fend's.
+    #[test]
+    fn a_percent_beside_an_amount_says_to_use_on_or_off() {
+        let mut ctx = fend_core::Context::new();
+        for expr in [
+            "100 m - 15%",
+            "100 m + 15%",
+            "15% + 100 m",
+            "100 m - 15% in cm",
+        ] {
+            let err = eval_line(&mut ctx, expr).err().unwrap();
+            assert_eq!(err.short(), "needs on or off", "{expr}");
+            assert!(err.to_string().contains("use on or off"), "{expr}");
+        }
+        let _ = eval(&mut ctx, "fee = 8%");
+        assert_eq!(
+            eval_line(&mut ctx, "100 m - fee").err().unwrap().short(),
+            "needs on or off"
+        );
+        for expr in ["5 m + 3 kg - 10%", "5 m in %"] {
+            let err = eval_line(&mut ctx, expr).err().unwrap();
+            assert_eq!(err.short(), "unit mismatch", "{expr}");
+        }
+        assert_eq!(eval(&mut ctx, "2 * (1 - 5%)"), Ok("1.9".to_string()));
+    }
+
     /// Recursion at the full cap doesn't fit a test thread's default stack,
     /// so this runs on the same big stack real callers use.
     #[test]
@@ -484,5 +848,63 @@ mod tests {
             eval(&mut ctx, &expr)
         });
         assert!(result.is_ok());
+    }
+
+    /// Phrasing fend alone doesn't read, one line per rewrite in
+    /// `preprocess`.
+    #[test]
+    fn natural_phrasing_reads_as_people_write_it() {
+        let mut ctx = fend_core::Context::new();
+        register_root(&mut ctx);
+        for (expr, shown) in [
+            ("4 plus 4", "8"),
+            ("4 with 4", "8"),
+            ("4 and 4", "8"),
+            ("4 & 6", "4"),
+            ("4 minus 4", "0"),
+            ("4 subtract 4", "0"),
+            ("4 without 4", "0"),
+            ("4 times 4", "16"),
+            ("4 multiplied by 4", "16"),
+            ("4 mul 4", "16"),
+            ("4 divide 4", "1"),
+            ("4 divide by 4", "1"),
+            ("4 divided by 4", "1"),
+            ("100 minus 15%", "99.85"),
+            ("arcsin(1)", "\u{2248} 1.5707963268"),
+            ("root 3 (27)", "3"),
+            ("20% of what is 30 cm", "150 cm"),
+            ("20% on what is 30 cm", "25 cm"),
+            ("20% off what is 30 cm", "37.5 cm"),
+            ("20 sq cm", "20 cm^2"),
+            ("20 cu cm", "20 cm^3"),
+            ("100 m^2 / 5 sq m", "20"),
+            ("100 m^3 / 2 cu m", "50"),
+            ("5 300 + 1", "5301"),
+        ] {
+            assert_eq!(eval(&mut ctx, expr), Ok(shown.to_string()), "{expr}");
+        }
+    }
+
+    #[test]
+    fn in_sci_shows_a_mantissa_and_a_power_of_ten() {
+        let mut ctx = fend_core::Context::new();
+        for (expr, shown) in [
+            ("5 300 in sci", "5.3e3"),
+            ("5300 m to scientific", "5.3e3 m"),
+            ("100 as sci", "1e2"),
+            ("0.0053 in sci", "5.3e-3"),
+            ("-12345.6789 in sci", "-1.23456789e4"),
+            ("5% on 30 in sci", "3.15e1"),
+            ("0 in sci", "0"),
+            ("1/3 in sci", "\u{2248} 3.333333333e-1"),
+        ] {
+            assert_eq!(eval(&mut ctx, expr), Ok(shown.to_string()), "{expr}");
+        }
+        // The shown result reads back as the same number, and `prev` still
+        // gets the plain one.
+        assert_eq!(eval(&mut ctx, "5.3e3 + 1"), Ok("5301".to_string()));
+        let ev = eval_line(&mut ctx, "5300 in sci").unwrap();
+        assert_eq!(ev.value.as_deref(), Some("5300"));
     }
 }

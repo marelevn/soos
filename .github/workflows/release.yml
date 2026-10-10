@@ -8,7 +8,20 @@ permissions:
   contents: read
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+      - run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
+      - run: cargo test --workspace --locked
+
   windows-zip:
+    needs: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -34,6 +47,7 @@ jobs:
           path: soos-windows-x86_64.zip
 
   macos-dmg:
+    needs: test
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -106,6 +120,7 @@ jobs:
           path: Soos.dmg
 
   linux-tar:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -117,8 +132,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev
       - run: cargo build --release --locked -p soos-app -p soos-cli
 
-      # soos.desktop needs its paths filled in; the README's Linux guide
-      # shows how.
+      # soos.desktop needs its paths filled in; docs/install-help.md shows how.
       - name: Package tar.gz
         run: |
           set -euo pipefail

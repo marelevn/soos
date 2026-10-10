@@ -2,6 +2,7 @@
 //! `sum`/`total` and `avg`/`average` reach across lines by substituting
 //! literal values before a line reaches fend, which only sees one line.
 
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use chrono::{DateTime, Local};
@@ -9,8 +10,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::engine;
+use crate::error::LineError;
 use crate::highlight::{CONVERSION_WORD, DATE_WORD};
-use crate::preprocess::{self, INTO_WORD, TIMES_WORD};
+use crate::preprocess::{self, INTO_WORD, OPERATOR_WORD};
 
 /// One document line's outcome -- see [`recalc`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,8 +28,8 @@ pub enum LineResult {
     Value(String),
     /// A date or time, shown as is and left out of `prev`/`sum`/`avg`.
     Date(String),
-    /// The full error message.
-    Error(String),
+    /// Why the line has no result.
+    Error(LineError),
 }
 
 /// One converter: `unit` = `factor` × `base`, with `aliases` as extra names.
@@ -45,6 +47,10 @@ pub struct RawConverter {
 static CONVERTER_NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9_]{0,23}$").unwrap());
 
+/// A converter factor with nothing in it that could assign a variable or
+/// name a unit.
+static ARITHMETIC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9.eE+*/^() -]+$").unwrap());
+
 /// The most converters the table may hold. Each costs a define and a check
 /// on every recalculation.
 pub const MAX_CONVERTERS: usize = 64;
@@ -60,15 +66,37 @@ fn is_reserved_word(name: &str) -> bool {
         || SUM.is_match(name)
         || AVG.is_match(name)
         || INTO_WORD.is_match(name)
-        || TIMES_WORD.is_match(name)
+        || OPERATOR_WORD.is_match(name)
         || CONVERSION_WORD.is_match(name)
         || DATE_WORD.is_match(name)
 }
 
+/// The variable a line assigns to (`rent` in `rent = 1800`), if any.
+fn assigned_name(expr: &str) -> Option<&str> {
+    Some(ASSIGNMENT.captures(expr)?.name("name")?.as_str())
+}
+
 /// The reserved word a line assigns to (`total = 5`), if any.
 fn reserved_assignment(expr: &str) -> Option<&str> {
-    let name = ASSIGNMENT.captures(expr)?.name("name")?.as_str();
+    let name = assigned_name(expr)?;
     is_reserved_word(name).then_some(name)
+}
+
+/// Whether a variable called `name` would take over a unit (`m`, `min`,
+/// `EUR`, a converter) or a constant (`e`, `k`): `m = 5` would make every
+/// `1 m` below it 5, with no error anywhere. A single letter fend only finds
+/// by its other case is free: `a` finds ampere's `A`, which stays `A`.
+fn takes_over_a_unit(ctx: &mut fend_core::Context, name: &str) -> bool {
+    let own = format!("1 {name}");
+    match engine::eval_line(ctx, &own) {
+        Err(_) => false,
+        Ok(found) => {
+            let by_other_case = name.chars().count() == 1
+                && found.display != own
+                && found.display.eq_ignore_ascii_case(&own);
+            !by_other_case
+        }
+    }
 }
 
 /// Whether `needle` is a whole word in `haystack`.
@@ -138,7 +166,8 @@ fn define_converter(
     // An unknown name in the base is usually a converter defined further
     // down the table, which the table's reorder buttons fix.
     if let Err(e) = engine::eval_line(ctx, &format!("1 {}", conv.base)) {
-        let message = if e.starts_with("unknown identifier") {
+        let unknown = matches!(&e, LineError::Fend(m) if m.starts_with("unknown identifier"));
+        let message = if unknown {
             "define base first"
         } else {
             "invalid base"
@@ -146,7 +175,13 @@ fn define_converter(
         return Err(message.to_string());
     }
 
-    let definition = format!("{factor} {}", conv.base);
+    // The factor as typed when it is only arithmetic, so `1/7` stays exact:
+    // `parse_factor` has only fend's 10-digit display of it.
+    let definition = if ARITHMETIC.is_match(conv.factor.trim()) {
+        format!("({}) {}", conv.factor.trim(), conv.base)
+    } else {
+        format!("{factor} {}", conv.base)
+    };
     engine::define_unit(ctx, &conv.unit, &definition);
 
     let mut skipped: Vec<&str> = Vec::new();
@@ -222,6 +257,9 @@ pub(crate) static AVG: LazyLock<Regex> =
 struct Held {
     reference: String,
     unit: String,
+    /// Shown as a percent, whether or not its value is written with the `%`
+    /// (`50 as a % of 100` holds a bare 50).
+    percent: bool,
 }
 
 /// What `prev` and the aggregates can see at the current line. `prev`
@@ -236,12 +274,17 @@ struct RunningValues {
     block: Vec<Held>,
     /// A plain line in the block has an error, so a total would be wrong.
     block_has_error: bool,
+    /// The variables this document has assigned, which may be assigned again
+    /// even when their name is also a unit's.
+    assigned: HashSet<String>,
 }
 
 /// The unit after a value's number (`"258990.56 VND"` -> `"VND"`).
 fn unit_of(value: &str) -> &str {
-    let number = value.split_whitespace().next().unwrap_or(value);
-    value[number.len()..].trim()
+    value
+        .trim()
+        .split_once(char::is_whitespace)
+        .map_or("", |(_, unit)| unit.trim())
 }
 
 /// The one unit the block's unit-bearing values share, if exactly one:
@@ -295,12 +338,14 @@ fn substitute_tokens(expr: &str, running: &RunningValues, promote_to: Option<&st
                 _ => held.reference.clone(),
             })
             .collect();
-        let sum = balanced_sum(&values);
+        // One operand, like `prev`: unwrapped, `sum * 2` would multiply only
+        // the block's last term.
+        let sum = format!("({})", balanced_sum(&values));
         if SUM.is_match(&out) {
             out = SUM.replace_all(&out, sum.as_str()).into_owned();
         }
         if AVG.is_match(&out) {
-            let avg = format!("(({sum}) / {})", running.block.len().max(1));
+            let avg = format!("({sum} / {})", running.block.len().max(1));
             out = AVG.replace_all(&out, avg.as_str()).into_owned();
         }
     }
@@ -314,28 +359,55 @@ fn eval_expr(
     aggregate: bool,
     running: &RunningValues,
     now: DateTime<Local>,
-) -> Result<engine::Evaluated, String> {
+) -> Result<engine::Evaluated, LineError> {
     if let Some(name) = reserved_assignment(expr) {
-        return Err(format!(
-            "'{name}' is a built-in word and can't be a variable name"
+        return Err(LineError::own(
+            format!("'{name}' is a built-in word and can't be a variable name"),
+            "reserved name",
         ));
+    }
+    if let Some(name) = assigned_name(expr) {
+        if !running.assigned.contains(name) && takes_over_a_unit(ctx, name) {
+            return Err(LineError::own(
+                format!("'{name}' is already a unit or constant; pick another name"),
+                "name in use",
+            ));
+        }
     }
     if aggregate {
         if running.block_has_error {
-            return Err("a line in this block has an error".to_string());
+            return Err(LineError::own(
+                "a line in this block has an error",
+                "error in block",
+            ));
         }
         if AVG.is_match(expr) && running.block.is_empty() {
-            return Err("nothing to average".to_string());
+            return Err(LineError::plain("nothing to average"));
+        }
+        let percents = running.block.iter().filter(|held| held.percent).count();
+        if percents > 0 && percents < running.block.len() {
+            return Err(LineError::own(
+                "can't add a percent to amounts; take it off the total, like 10% off sum",
+                "percent in block",
+            ));
         }
     }
     let evaluated = engine::eval_line_at(ctx, &substitute_tokens(expr, running, None), now);
     let Err(error) = &evaluated else {
         return evaluated;
     };
+    // The block is written into the line, which has a length cap: a long
+    // block fails on a line that only says `sum`.
+    if aggregate && matches!(error, LineError::TooLong) {
+        return Err(LineError::own(
+            "too many lines to add up; start a new block",
+            "too many lines",
+        ));
+    }
     // A block of one unit plus plain numbers (`5 m`, `3`) can't be added
     // as is; count the plain numbers as that unit. Two different units
     // (`5 m`, `3 kg`) stay an error.
-    if !aggregate || crate::format::shorten_error(error) != "unit mismatch" {
+    if !aggregate || !error.is_unit_mismatch() {
         return evaluated;
     }
     let Some(unit) = common_unit(&running.block) else {
@@ -345,6 +417,26 @@ fn eval_expr(
         Ok(ev) => Ok(ev),
         Err(_) => evaluated,
     }
+}
+
+/// A line that ends in a function (`ans`, `root`, a leftover `Q1:500`) has
+/// no value to show, and `prev` and `sum` couldn't use it. An assignment may
+/// still hold one: `f = \x.x * 2`.
+fn reject_a_function(
+    expr: &str,
+    evaluated: engine::Evaluated,
+) -> Result<engine::Evaluated, LineError> {
+    let is_function = evaluated
+        .value
+        .as_deref()
+        .is_some_and(|value| value.starts_with('\\'));
+    if is_function && !ASSIGNMENT.is_match(expr) {
+        return Err(LineError::own(
+            "that is a function, not a number",
+            "not a number",
+        ));
+    }
+    Ok(evaluated)
 }
 
 /// Recalculate every line of `source`, one [`LineResult`] per line. `ctx`
@@ -372,7 +464,9 @@ pub(crate) fn recalc(
             Ok(expr) => {
                 let aggregate = reserved_assignment(&expr).is_none()
                     && (SUM.is_match(&expr) || AVG.is_match(&expr));
-                match eval_expr(ctx, &expr, aggregate, &running, now) {
+                let evaluated = eval_expr(ctx, &expr, aggregate, &running, now)
+                    .and_then(|ev| reject_a_function(&expr, ev));
+                match evaluated {
                     Err(e) => {
                         if !aggregate {
                             running.block_has_error = true;
@@ -381,6 +475,9 @@ pub(crate) fn recalc(
                     }
                     Ok(ev) => match ev.value {
                         Some(value) => {
+                            if let Some(name) = assigned_name(&expr) {
+                                running.assigned.insert(name.to_string());
+                            }
                             // Shown exactly, a result reads back as its
                             // text. An inexact one is kept at full precision
                             // in a hidden variable, so `sqrt(2)`, then
@@ -393,9 +490,15 @@ pub(crate) fn recalc(
                             };
                             running.prev = Some(reference.clone());
                             if !aggregate {
+                                let percent = ev.display.ends_with('%');
                                 running.block.push(Held {
-                                    reference,
+                                    reference: if percent && !reference.ends_with('%') {
+                                        format!("({reference})%")
+                                    } else {
+                                        reference
+                                    },
                                     unit: unit_of(&value).to_string(),
+                                    percent,
                                 });
                             }
                             results.push(LineResult::Value(ev.display));
@@ -424,7 +527,7 @@ mod tests {
     }
 
     fn error_containing(result: &LineResult, needle: &str) -> bool {
-        matches!(result, LineResult::Error(e) if e.contains(needle))
+        matches!(result, LineResult::Error(e) if e.to_string().contains(needle))
     }
 
     #[test]
@@ -435,13 +538,21 @@ mod tests {
 
     #[test]
     fn a_variable_assigned_a_percent_phrase_holds_its_result() {
-        let results = recalc_str("price = 100 - 15%\nprice * 2");
+        let results = recalc_str("price = 15% off 100\nprice * 2");
         assert_eq!(results, [value("85"), value("170")]);
     }
 
     #[test]
     fn percent_taken_off_a_block_total() {
-        assert_eq!(recalc_str("60\n40\nsum - 15%")[2], value("85"));
+        assert_eq!(recalc_str("60\n40\n15% off sum")[2], value("85"));
+    }
+
+    /// Only `on` and `off` add or take off a percent; after `+` or `-` it is
+    /// the plain fraction, as in any expression.
+    #[test]
+    fn a_percent_after_plus_or_minus_is_plain_arithmetic() {
+        let results = recalc_str("30 + 5%\n100 - 5%\n(100 - 5%) * 2");
+        assert_eq!(results, [value("30.05"), value("99.95"), value("199.9")]);
     }
 
     #[test]
@@ -491,13 +602,18 @@ mod tests {
     #[test]
     fn avg_of_an_empty_block_is_an_error() {
         let results = recalc_str("avg\nsum");
-        assert_eq!(results[0], LineResult::Error("nothing to average".into()));
+        assert_eq!(
+            results[0],
+            LineResult::Error(LineError::plain("nothing to average"))
+        );
         assert_eq!(results[1], value("0"));
     }
 
     #[test]
     fn a_reserved_word_cannot_be_a_variable() {
-        for name in ["total", "sum", "avg", "average", "prev", "today", "in"] {
+        for name in [
+            "total", "sum", "avg", "average", "prev", "today", "in", "and", "plus", "mul", "before",
+        ] {
             let results = recalc_str(&format!("{name} = 5"));
             assert!(error_containing(&results[0], "built-in word"), "{name}");
         }
@@ -523,6 +639,77 @@ mod tests {
     }
 
     #[test]
+    fn a_function_is_not_a_result_unless_assigned() {
+        // As the app sets it up: `ans` on the first line is `root`'s lambda.
+        let recalc_str = |source: &str| {
+            let mut ctx = fend_core::Context::new();
+            engine::register_root(&mut ctx);
+            recalc(&mut ctx, source, Local::now())
+        };
+        for source in ["ans", "root", "5\nroot", "Q1:500"] {
+            let last = recalc_str(source).pop().unwrap();
+            assert!(
+                error_containing(&last, "a function, not a number"),
+                "{source}"
+            );
+        }
+        assert_eq!(recalc_str("5\nans")[1], value("5"));
+        assert_eq!(recalc_str("root 3 (27)")[0], value("3"));
+        assert_eq!(recalc_str("f = \\x.x*2\nf 3")[1], value("6"));
+        // Like any error, it stops a `sum` from quietly leaving it out.
+        assert!(error_containing(
+            &recalc_str("1\n2\nroot\nsum")[3],
+            "has an error"
+        ));
+        // `ans` after a result is that result.
+        assert_eq!(recalc_str("1\n2\nans\nsum")[3], value("5"));
+    }
+
+    /// `m = 5` would turn every `1 m` below it into 5.
+    #[test]
+    fn a_variable_cannot_take_over_a_unit_or_constant() {
+        for name in [
+            "m", "s", "g", "h", "t", "c", "e", "k", "min", "cup", "hours", "pi",
+        ] {
+            let results = recalc_str(&format!("{name} = 5\n2 {name}"));
+            assert!(
+                error_containing(&results[0], "is already a unit or constant"),
+                "{name}: {:?}",
+                results[0]
+            );
+        }
+        // Free: unused letters, and a letter fend only finds by its other case.
+        for name in [
+            "x", "y", "z", "rent", "a", "f", "n", "p", "r", "u", "v", "w", "D",
+        ] {
+            assert_eq!(
+                recalc_str(&format!("{name} = 5\n{name} * 2"))[1],
+                value("10"),
+                "{name}"
+            );
+        }
+        // A variable the document made can be assigned again, and a
+        // converter's name is taken like any unit's.
+        assert_eq!(recalc_str("x = 5\nx = x + 1\nx")[2], value("6"));
+        assert_eq!(recalc_str("a = 1\na = a + 1")[1], value("2"));
+        let (mut ctx, _) = define_all(&[converter("lap", &[], "m", "400")]);
+        assert!(error_containing(
+            &recalc(&mut ctx, "lap = 5", Local::now())[0],
+            "is already a unit or constant"
+        ));
+    }
+
+    #[test]
+    fn sum_and_avg_are_one_operand() {
+        assert_eq!(recalc_str("1\n2\nsum * 2")[2], value("6"));
+        assert_eq!(recalc_str("1\n2\n2 * sum")[2], value("6"));
+        assert_eq!(recalc_str("1\n2\nsum^2")[2], value("9"));
+        assert_eq!(recalc_str("1\n2\n-sum")[2], value("-3"));
+        assert_eq!(recalc_str("4\n2\navg^2")[2], value("9"));
+        assert_eq!(recalc_str("5 m\n3\nsum * 2")[2], value("16 m"));
+    }
+
+    #[test]
     fn dates_stay_out_of_prev_and_sum() {
         let results = recalc_str("today + 17 days\n5\nsum");
         assert!(matches!(results[0], LineResult::Date(_)));
@@ -533,7 +720,20 @@ mod tests {
     #[test]
     fn percent_results_feed_back_as_their_number() {
         assert_eq!(recalc_str("50 as a % of 100\nprev + 1")[1], value("51"));
-        assert_eq!(recalc_str("50 as a % of 100\n10\nsum")[2], value("60"));
+        assert_eq!(recalc_str("50 as a % of 100\n50%\nsum")[2], value("100%"));
+    }
+
+    #[test]
+    fn a_percent_among_amounts_is_not_added() {
+        for source in ["50%\n10\nsum", "5 m\n10%\navg", "50 as a % of 100\n10\nsum"] {
+            let results = recalc_str(source);
+            assert!(
+                error_containing(&results[2], "can't add a percent"),
+                "{source}"
+            );
+        }
+        assert_eq!(recalc_str("10%\n20%\nsum")[2], value("30%"));
+        assert_eq!(recalc_str("60\n40\n15% off sum")[2], value("85"));
     }
 
     #[test]
@@ -548,6 +748,16 @@ mod tests {
         assert_eq!(results[0], LineResult::Header);
         assert_eq!(results[1], LineResult::Label);
         assert_eq!(results[2], value("2"));
+    }
+
+    /// A heading with a digit in it starts a block like any other label,
+    /// and doesn't spoil the `sum` below it.
+    #[test]
+    fn a_label_with_a_digit_starts_a_block_and_does_not_break_the_sum() {
+        let results = recalc_str("1\nWeek 2:\n10\n20\nsum\nQ1: 500");
+        assert_eq!(results[1], LineResult::Label);
+        assert_eq!(results[4], value("30"));
+        assert_eq!(results[5], value("500"));
     }
 
     #[test]
@@ -612,7 +822,10 @@ mod tests {
     fn failed_converter_is_not_registered() {
         let (mut ctx, results) = define_all(&[converter("FEU", &[], "teu", "2")]);
         assert!(results[0].is_err());
-        let err = engine::eval_line(&mut ctx, "1 FEU").err().unwrap();
+        let err = engine::eval_line(&mut ctx, "1 FEU")
+            .err()
+            .unwrap()
+            .to_string();
         assert!(err.starts_with("unknown identifier"), "{err}");
     }
 
@@ -636,6 +849,15 @@ mod tests {
         let (mut ctx, results) = define_all(&[converter("u5", &[], "m", "10/2")]);
         assert!(results[0].is_ok(), "{:?}", results[0]);
         assert_eq!(display(&mut ctx, "1 u5 to m"), "5 m");
+    }
+
+    /// `1/7` stays exact, where fend's display of it has ten digits.
+    #[test]
+    fn converter_factor_division_is_exact() {
+        let (mut ctx, results) = define_all(&[converter("seventh", &[], "m", "1/7")]);
+        assert!(results[0].is_ok(), "{:?}", results[0]);
+        assert_eq!(display(&mut ctx, "7 seventh to m"), "1 m");
+        assert_eq!(display(&mut ctx, "21 seventh to m"), "3 m");
     }
 
     #[test]

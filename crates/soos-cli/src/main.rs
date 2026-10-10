@@ -78,11 +78,9 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Command {
             _ => parts.push(arg),
         }
     }
+    // A lone `-` reads stdin; among other words it is a minus (`5 - 3`).
     let expression = match parts.as_slice() {
         [only] if only == "-" => None,
-        _ if parts.iter().any(|p| p == "-") => {
-            return Command::Usage("`-` (read stdin) can't be combined with an expression".into());
-        }
         _ => Some(parts.join(" ")),
     };
     Command::Run(Options {
@@ -251,7 +249,11 @@ mod tests {
             panic!("expected Run");
         };
         assert_eq!(options.expression, None);
-        assert!(matches!(args(&["-", "1 + 1"]), Command::Usage(_)));
+        // Among other words a `-` is a minus, as an unquoted `5 - 3` is.
+        let Command::Run(options) = args(&["5", "-", "3"]) else {
+            panic!("expected Run");
+        };
+        assert_eq!(options.expression.as_deref(), Some("5 - 3"));
         assert!(matches!(args(&["--jsn", "1"]), Command::Usage(_)));
         assert_eq!(args(&["-h"]), Command::Help);
         assert_eq!(args(&["--version"]), Command::Version);
@@ -299,29 +301,43 @@ mod tests {
         assert_eq!(out.code, 1);
     }
 
-    /// 1 EUR = 1 USD, from a cache file (read once, on construction).
+    /// 1 EUR = 1 USD.
     fn fixed_rates() -> RateSource {
-        let dir = std::env::temp_dir().join(format!("soos-cli-readme-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("rates.json");
-        std::fs::write(
-            &path,
-            r#"{"rates":{"EUR":1.0,"USD":1.0},"fetched_at_unix":0,"source_version":2}"#,
-        )
-        .unwrap();
-        let rates = RateSource::new(path);
-        let _ = std::fs::remove_dir_all(&dir);
-        rates
+        RateSource::with_rates(&[("EUR", 1.0), ("USD", 1.0)])
     }
 
-    /// Every result shown in the README, except dates, which depend on
-    /// today: the Quick guide (run as one document) and the soos-cli
-    /// examples.
+    fn repo_root() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
+
+    /// Runs `lines`, "expression  result" pairs as in the README's Quick
+    /// guide, as one document, and checks every result given.
+    fn assert_results(name: &str, lines: &[&str], rates: &RateSource) {
+        let pairs: Vec<(&str, Option<&str>)> = lines
+            .iter()
+            .map(|l| match l.trim().rsplit_once("  ") {
+                Some((expr, result)) => (expr.trim(), Some(result.trim())),
+                None => (l.trim(), None),
+            })
+            .collect();
+        let document: Vec<&str> = pairs.iter().map(|(expr, _)| *expr).collect();
+        let (_, results) = soos_core::recalc_document(&document.join("\n"), &[], rates);
+        for ((expr, expected), result) in pairs.iter().zip(&results) {
+            if let Some(expected) = expected {
+                let shown = soos_core::format::shown(result, false).map(|s| s.text);
+                assert_eq!(shown.as_deref(), Some(*expected), "{name}: {expr}");
+            }
+        }
+    }
+
+    /// Every result shown in the README and the docs pages, except dates,
+    /// which depend on today: the README's Quick guide (run as one
+    /// document) and the soos-cli examples.
     #[test]
     fn readme_examples_match_the_engine() {
-        let readme = include_str!("../../../README.md");
+        let root = repo_root();
+        let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
         let rates = fixed_rates();
-        let shown = |r: &soos_core::LineResult| soos_core::format::shown(r, false).map(|s| s.text);
 
         let quick = &readme[readme.find("## Quick guide").unwrap()..];
         let block: Vec<&str> = quick
@@ -329,40 +345,69 @@ mod tests {
             .skip_while(|l| !l.starts_with("    "))
             .take_while(|l| l.starts_with("    ") || l.is_empty())
             .collect();
-        let pairs: Vec<(&str, Option<&str>)> = block
-            .iter()
-            .map(|l| match l.trim().rsplit_once("  ") {
-                Some((expr, result)) => (expr.trim(), Some(result.trim())),
-                None => (l.trim(), None),
-            })
-            .collect();
-        assert!(pairs.len() > 3, "no Quick guide example found");
-        let document: Vec<&str> = pairs.iter().map(|(expr, _)| *expr).collect();
-        let (_, results) = soos_core::recalc_document(&document.join("\n"), &[], &rates);
-        for ((expr, expected), result) in pairs.iter().zip(&results) {
-            if let Some(expected) = expected {
-                assert_eq!(shown(result).as_deref(), Some(*expected), "{expr}");
+        assert!(block.len() > 3, "no Quick guide example found");
+        assert_results("README", &block, &rates);
+
+        let mut pages = vec![("README.md".to_string(), readme)];
+        for entry in std::fs::read_dir(root.join("docs")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|ext| ext == "md") {
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                pages.push((name, std::fs::read_to_string(&path).unwrap()));
             }
         }
-
-        let lines: Vec<&str> = readme.lines().collect();
         let mut checked = 0;
-        for pair in lines.windows(2) {
-            let Some(expr) = pair[0]
-                .strip_prefix("$ soos-cli '")
-                .and_then(|rest| rest.strip_suffix('\''))
-            else {
-                continue;
-            };
-            let expected = pair[1].trim();
-            if expected.as_bytes().get(4) == Some(&b'-') {
-                continue;
+        for (page, text) in &pages {
+            let lines: Vec<&str> = text.lines().collect();
+            for pair in lines.windows(2) {
+                let Some(expr) = pair[0]
+                    .strip_prefix("$ soos-cli '")
+                    .and_then(|rest| rest.strip_suffix('\''))
+                else {
+                    continue;
+                };
+                let expected = pair[1].trim();
+                // A date or time reads `Friday, 25 December 2026`, and
+                // these depend on today.
+                if [
+                    "Monday,",
+                    "Tuesday,",
+                    "Wednesday,",
+                    "Thursday,",
+                    "Friday,",
+                    "Saturday,",
+                    "Sunday,",
+                ]
+                .iter()
+                .any(|day| expected.starts_with(day))
+                {
+                    continue;
+                }
+                let shown = soos_core::evaluate_one(expr, &[], &rates, false).map(|s| s.text);
+                assert_eq!(shown.as_deref(), Some(expected), "{page}: {expr}");
+                checked += 1;
             }
-            let shown = soos_core::evaluate_one(expr, &[], &rates, false).map(|s| s.text);
-            assert_eq!(shown.as_deref(), Some(expected), "{expr}");
-            checked += 1;
         }
         assert!(checked >= 2, "no soos-cli examples found");
+    }
+
+    /// The cards the docs pages show (docs/cards/*.txt, drawn by
+    /// scripts/make-cards.py): each is a document with its results beside
+    /// it, so a card can't show what the engine doesn't print.
+    #[test]
+    fn doc_cards_match_the_engine() {
+        let rates = fixed_rates();
+        let mut checked = 0;
+        for entry in std::fs::read_dir(repo_root().join("docs/cards")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|ext| ext == "txt") {
+                let text = std::fs::read_to_string(&path).unwrap();
+                let lines: Vec<&str> = text.lines().collect();
+                assert_results(&path.display().to_string(), &lines, &rates);
+                checked += 1;
+            }
+        }
+        assert!(checked >= 5, "no cards found");
     }
 
     #[test]

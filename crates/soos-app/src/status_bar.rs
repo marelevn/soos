@@ -3,7 +3,14 @@
 
 use std::time::Duration;
 
-use super::*;
+use eframe::egui::text::LayoutJob;
+use eframe::egui::{self, Color32, Theme, ViewportCommand};
+
+use crate::editor::APP_PADDING;
+use crate::style::{cap_center_offset, mono, status_symbol, status_text, Palette};
+use crate::tray::FULL_DESKTOP;
+use crate::update::{open_url, update_message};
+use crate::SoosApp;
 
 /// How long "Copied ..." stays in the message slot.
 const COPIED_FOR: Duration = Duration::from_millis(1500);
@@ -60,6 +67,7 @@ impl SoosApp {
                                 self.hotkey_control(ui, palette);
                                 theme_control(ui, palette);
                                 self.high_precision_control(ui, palette);
+                                self.decimal_comma_control(ui, palette);
                                 if FULL_DESKTOP {
                                     self.always_on_top_control(ui, palette);
                                 }
@@ -105,7 +113,8 @@ impl SoosApp {
     }
 
     /// A hotkey prompt or error first, then a failed converters export, a
-    /// recent copy, and the result of an update check.
+    /// recent copy, the result of an update check, and last the launch
+    /// warning that the saved tabs couldn't be read.
     fn status_message(&self, ctx: &egui::Context, palette: Palette) -> Option<StatusMessage> {
         let plain = |text: String, color: Color32| StatusMessage {
             text,
@@ -133,6 +142,10 @@ impl SoosApp {
         self.update_status
             .as_ref()
             .map(|status| update_message(status, palette))
+            .or_else(|| {
+                let warning = self.load_warning.clone()?;
+                Some(plain(warning, palette.error))
+            })
     }
 
     fn high_precision_control(&mut self, ui: &mut egui::Ui, palette: Palette) {
@@ -150,6 +163,34 @@ impl SoosApp {
             tooltip,
         ) {
             self.high_precision = !self.high_precision;
+        }
+    }
+
+    /// The glyph shows how a decimal reads now. Recalculates, since the
+    /// text sent to the engine changes with it, though the text itself
+    /// doesn't.
+    fn decimal_comma_control(&mut self, ui: &mut egui::Ui, palette: Palette) {
+        let (glyph, tooltip) = if self.decimal_comma {
+            (
+                "0,1",
+                "Decimal comma is on: 1.234,5. Click for a decimal point, 1,234.5",
+            )
+        } else {
+            (
+                "0.1",
+                "Decimal point is on: 1,234.5. Click for a decimal comma, 1.234,5",
+            )
+        };
+        if symbol_toggle(
+            ui,
+            palette,
+            glyph,
+            self.decimal_comma,
+            palette.result,
+            tooltip,
+        ) {
+            self.decimal_comma = !self.decimal_comma;
+            self.force_recalc();
         }
     }
 

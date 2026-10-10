@@ -140,6 +140,23 @@ impl RateSource {
         }
     }
 
+    /// Rates held in memory only, as if just downloaded, so a test needs no
+    /// file: a cache file in the temp directory is shared by every test that
+    /// writes one, and they race.
+    pub fn with_rates(rates: &[(&str, f64)]) -> Self {
+        let source = Self::new(PathBuf::new());
+        *source.cache.write().unwrap() = RateCache {
+            rates: rates
+                .iter()
+                .map(|(code, rate)| (code.to_string(), *rate))
+                .collect(),
+            fetched_at_unix: now_unix(),
+            source_version: CACHE_VERSION,
+            failed_at_unix: 0,
+        };
+        source
+    }
+
     /// Best effort: if the cache can't be written, the next run fetches again.
     fn save(&self, cache: &RateCache) {
         if self.cache_path.as_os_str().is_empty() {
@@ -269,19 +286,10 @@ mod tests {
 
     /// `ExchangeRateFnV2Options` has no public constructor, so the handler is
     /// tested through `fend_core::evaluate`.
-    fn seeded(rates: &[(&str, f64)]) -> RateSource {
-        let src = RateSource::new(PathBuf::new());
-        let mut cache = src.cache.write().unwrap();
-        cache.rates = rates.iter().map(|(k, v)| (k.to_string(), *v)).collect();
-        cache.fetched_at_unix = now_unix();
-        drop(cache);
-        src
-    }
-
     #[test]
     fn missing_rate_errors_via_evaluate() {
         let mut ctx = fend_core::Context::new();
-        ctx.set_exchange_rate_handler_v2(seeded(&[("EUR", 1.0)]));
+        ctx.set_exchange_rate_handler_v2(RateSource::with_rates(&[("EUR", 1.0)]));
         let result = fend_core::evaluate("1 USD to EUR", &mut ctx);
         assert!(result.is_err());
     }
@@ -290,7 +298,7 @@ mod tests {
     fn known_rate_converts_via_evaluate() {
         let mut ctx = fend_core::Context::new();
         // 1 EUR = 2 USD, so 1 USD = 0.5 EUR.
-        ctx.set_exchange_rate_handler_v2(seeded(&[("EUR", 1.0), ("USD", 2.0)]));
+        ctx.set_exchange_rate_handler_v2(RateSource::with_rates(&[("EUR", 1.0), ("USD", 2.0)]));
         let result = fend_core::evaluate("1 USD to EUR", &mut ctx).unwrap();
         assert_eq!(result.get_main_result(), "0.5 EUR");
     }
@@ -316,12 +324,12 @@ mod tests {
     #[test]
     fn age_is_none_without_rates() {
         assert_eq!(RateSource::new(PathBuf::new()).age(), None);
-        assert!(seeded(&[("EUR", 1.0)]).age().unwrap() < Duration::from_secs(60));
+        assert!(RateSource::with_rates(&[("EUR", 1.0)]).age().unwrap() < Duration::from_secs(60));
     }
 
     #[test]
     fn cli_skips_the_network_for_a_while_after_a_failure() {
-        let src = seeded(&[("EUR", 1.0)]);
+        let src = RateSource::with_rates(&[("EUR", 1.0)]);
         src.cache.write().unwrap().fetched_at_unix = 0;
         assert!(src.cli_should_refresh());
         src.cache.write().unwrap().failed_at_unix = now_unix();
@@ -334,7 +342,7 @@ mod tests {
     /// The symbol and rounding are display only; `sum` adds fend's values.
     #[test]
     fn currency_sum_keeps_symbols_out_of_the_math() {
-        let rates = seeded(&[("EUR", 1.0), ("USD", 2.0)]);
+        let rates = RateSource::with_rates(&[("EUR", 1.0), ("USD", 2.0)]);
         let (_, results) = crate::recalc_document("10 USD\n5 USD\nsum", &[], &rates);
         assert_eq!(results[2], crate::LineResult::Value("15 USD".to_string()));
         let shown = crate::format::shown(&results[2], false).unwrap();

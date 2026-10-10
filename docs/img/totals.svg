@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="278" viewBox="0 0 360 278" role="img" aria-labelledby="title desc">
+<title id="title">Soos example: totals</title>
+<desc id="desc">Rent: 1800  1,800
+Food: 4 * 150  600
+Bus pass: 12 * 2.5  30
+sum  2,430
+
+rent = 1800  1,800
+rent * 12  21,600
+prev / 2  10,800
+avg  11,400</desc>
+<rect x="0.5" y="0.5" width="359" height="277" rx="10" fill="#222428" stroke="#3a3d42"/>
+<circle cx="20" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="38" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="56" cy="17" r="6" fill="#4a4d52"/>
+<text x="180" y="22" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#959aa2">Soos</text>
+<text x="22" y="56" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#b8bcc3">Rent: </tspan><tspan fill="#f0f0f0">1800</tspan></text>
+<text x="338" y="56" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">1,800</text>
+<text x="22" y="81" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#b8bcc3">Food: </tspan><tspan fill="#f0f0f0">4 * 150</tspan></text>
+<text x="338" y="81" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">600</text>
+<text x="22" y="106" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#b8bcc3">Bus pass: </tspan><tspan fill="#f0f0f0">12 * 2.5</tspan></text>
+<text x="338" y="106" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">30</text>
+<text x="22" y="131" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#5bc8e8">sum</tspan></text>
+<text x="338" y="131" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">2,430</text>
+<text x="22" y="181" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">rent = 1800</tspan></text>
+<text x="338" y="181" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">1,800</text>
+<text x="22" y="206" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">rent * 12</tspan></text>
+<text x="338" y="206" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">21,600</text>
+<text x="22" y="231" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#5bc8e8">prev</tspan><tspan fill="#f0f0f0"> / 2</tspan></text>
+<text x="338" y="231" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">10,800</text>
+<text x="22" y="256" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#5bc8e8">avg</tspan></text>
+<text x="338" y="256" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">11,400</text>
+</svg>

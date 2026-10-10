@@ -3140,7 +3140,7 @@ dependencies = [
 
 [[package]]
 name = "soos-app"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "eframe",
  "global-hotkey",
@@ -3156,7 +3156,7 @@ dependencies = [
 
 [[package]]
 name = "soos-cli"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "serde_json",
  "soos-core",
@@ -3164,7 +3164,7 @@ dependencies = [
 
 [[package]]
 name = "soos-core"
-version = "1.0.4"
+version = "1.0.5"
 dependencies = [
  "chrono",
  "chrono-tz",

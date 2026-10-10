@@ -2,6 +2,10 @@
 //! soos-cli prints: currency symbols and rounding, thousands separators,
 //! short error labels.
 
+use std::sync::LazyLock;
+
+use regex::{Captures, Regex};
+
 use crate::LineResult;
 
 /// Shown in place of fend's `"approx. "` prefix.
@@ -29,6 +33,44 @@ pub struct Shown {
     pub error: Option<String>,
     /// Every digit of a value `text` shows rounded (the app's hover text).
     pub full: Option<String>,
+}
+
+impl Shown {
+    /// The same result with `.` and `,` swapped in its numbers, for the
+    /// decimal-comma setting. An error is left as it is: its text is words.
+    pub fn swapped(self) -> Shown {
+        if self.error.is_some() {
+            return self;
+        }
+        Shown {
+            text: swap_separators(&self.text),
+            copy: swap_separators(&self.copy),
+            error: None,
+            full: self.full.map(|full| swap_separators(&full)),
+        }
+    }
+}
+
+/// `.` and `,` swapped inside every number of `text` (`1,234.5` and
+/// `1.234,5`), for the decimal-comma setting. It works on numbers only, not
+/// the whole string: `November 15, 2027` keeps its comma, and a date's `.`
+/// or `,` is never next to digits on both sides. Applying it twice gives
+/// `text` back, so it turns what the user types into the form the engine
+/// reads and what the engine shows into the form the user reads.
+pub fn swap_separators(text: &str) -> String {
+    static NUMBER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\d+(?:[.,]\d+)+").unwrap());
+    NUMBER
+        .replace_all(text, |caps: &Captures| {
+            caps[0]
+                .chars()
+                .map(|c| match c {
+                    '.' => ',',
+                    ',' => '.',
+                    other => other,
+                })
+                .collect::<String>()
+        })
+        .into_owned()
 }
 
 /// Decimals an inexact result is shown with -- after any leading zeros of
@@ -69,11 +111,11 @@ pub fn shown(result: &LineResult, high_precision: bool) -> Option<Shown> {
             full: None,
         }),
         LineResult::Error(error) => {
-            let short = shorten_error(error);
+            let short = error.short();
             Some(Shown {
                 text: short.clone(),
                 copy: short,
-                error: Some(error.clone()),
+                error: Some(error.to_string()),
                 full: None,
             })
         }
@@ -161,8 +203,8 @@ pub(crate) fn group_digits(display: &str) -> String {
     out
 }
 
-/// How one currency is shown. A currency without an entry keeps fend's own
-/// form, `12 CAD`.
+/// How one currency is shown. A currency without an entry is shown with its
+/// code after the amount (`12.00 CAD`), see [`Money`].
 pub(crate) struct CurrencyStyle {
     /// ISO 4217 code, as fend prints it after the amount.
     pub code: &'static str,
@@ -208,25 +250,66 @@ pub(crate) const CURRENCY_STYLES: &[CurrencyStyle] = &[
     style("AUD", "A$", true, 2),
 ];
 
+/// The ISO 4217 codes fend-core 1.5.8 knows as currencies (its own list, in
+/// `units/builtin.rs`) without the code for "no currency", for a code with
+/// no entry in [`CURRENCY_STYLES`].
+/// A unit named in capitals, such as a converter `LAP`, is not one of them.
+const ISO_CODES: &str = "AED AFN ALL AMD ANG AOA ARS AUD AWG AZN BAM BBD BDT BGN BHD BIF BMD BND \
+BOB BOV BRL BSD BTN BWP BYN BZD CAD CDF CHE CHF CHW CLF CLP CNY COP COU CRC CUC CUP CVE CZK DJF \
+DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HRK HTG HUF IDR ILS \
+INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL \
+MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MXV MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP \
+PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SLL SOS SRD SSP STN SVC SYP SZL \
+THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD USN UYI UYU UYW UZS VED VES VND VUV WST XAF XAG \
+XAU XBA XBB XBC XBD XCD XDR XOF XPD XPF XPT XSU XTS XUA YER ZAR ZMW ZWL";
+
+/// Currencies whose usual amount has no decimals or three. Every other
+/// currency has two.
+const NO_DECIMALS: &[&str] = &[
+    "BIF", "CLP", "DJF", "GNF", "ISK", "KMF", "PYG", "RWF", "UGX", "VUV", "XAF", "XOF", "XPF",
+];
+const THREE_DECIMALS: &[&str] = &["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"];
+
 /// A fend currency result (`"7.7015644 USD"`, maybe with `≈`), rounded.
 struct Money {
     approx: bool,
     negative: bool,
     /// Unsigned decimal digits, already rounded.
     amount: String,
-    style: &'static CurrencyStyle,
+    symbol: String,
+    symbol_first: bool,
 }
 
 impl Money {
-    /// `None` unless `display` is `<number> <code>` for a code in
-    /// [`CURRENCY_STYLES`].
+    /// `None` unless `display` is `<number> <currency>`: a code, or fend's
+    /// own `dollars` and `euros`. A code with no entry in [`CURRENCY_STYLES`]
+    /// keeps its code after the amount.
     fn parse(display: &str, high_precision: bool) -> Option<Money> {
         let (approx, rest) = match display.strip_prefix(APPROX) {
             Some(rest) => (true, rest),
             None => (false, display),
         };
-        let (amount, code) = rest.rsplit_once(' ')?;
-        let style = CURRENCY_STYLES.iter().find(|s| s.code == code)?;
+        let (amount, name) = rest.rsplit_once(' ')?;
+        let code = match name {
+            "dollar" | "dollars" => "USD",
+            "euro" | "euros" => "EUR",
+            other => other,
+        };
+        let (symbol, symbol_first, decimals) = match CURRENCY_STYLES.iter().find(|s| s.code == code)
+        {
+            Some(style) => (style.symbol.to_string(), style.symbol_first, style.decimals),
+            None if ISO_CODES.split(' ').any(|iso| iso == code) => {
+                let decimals = if NO_DECIMALS.contains(&code) {
+                    0
+                } else if THREE_DECIMALS.contains(&code) {
+                    3
+                } else {
+                    2
+                };
+                (name.to_string(), false, decimals)
+            }
+            None => return None,
+        };
         let (negative, digits) = match amount.strip_prefix('-') {
             Some(digits) => (true, digits),
             None => (false, amount),
@@ -234,7 +317,7 @@ impl Money {
         let amount = if high_precision {
             is_decimal(digits).then(|| digits.to_string())?
         } else {
-            round_half_up(digits, style.decimals)?
+            round_half_up(digits, decimals)?
         };
         // Rounding -0.001 gives 0.00, not -0.00.
         let negative = negative && amount.bytes().any(|b| matches!(b, b'1'..=b'9'));
@@ -242,7 +325,8 @@ impl Money {
             approx,
             negative,
             amount,
-            style,
+            symbol,
+            symbol_first,
         })
     }
 
@@ -255,8 +339,8 @@ impl Money {
             self.amount.clone()
         };
         let sign = if self.negative { "-" } else { "" };
-        let symbol = self.style.symbol;
-        let body = if self.style.symbol_first {
+        let symbol = &self.symbol;
+        let body = if self.symbol_first {
             format!("{sign}{symbol}{amount}")
         } else {
             format!("{sign}{amount} {symbol}")
@@ -322,23 +406,21 @@ fn round_half_up(digits: &str, decimals: usize) -> Option<String> {
     Some(out)
 }
 
+/// The label for fend refusing to mix units. [`crate::LineError::is_unit_mismatch`]
+/// tests for it, so it is named once.
+pub(crate) const UNIT_MISMATCH: &str = "unit mismatch";
+
 /// (needle, short label): the first needle a message contains picks its
 /// label. The needles are fend-core 1.5.8's wording, which is why
 /// `Cargo.toml` pins that version exactly. Variants a user couldn't tell
-/// apart share a label.
+/// apart share a label. Soos's own messages aren't here: each carries its
+/// label (see [`crate::LineError::own`]).
 const ERROR_RULES: &[(&str, &str)] = &[
     // fend wraps these as "failed to retrieve USD exchange rate: <ours>".
     ("no exchange rates downloaded yet", "no rates yet"),
     ("no exchange rate cached for", "no rate"),
-    // Soos's own messages, from `document` and `engine`.
-    ("a line in this block has an error", "error in block"),
-    ("is a built-in word", "reserved name"),
-    ("is not a percent", "not a percent"),
-    ("with @ in front", "date needs @"),
-    ("has no time of day", "no time of day"),
-    ("only work alone", "unsupported date"),
     // Also what `sum` over two units gives, so not "can't convert".
-    ("cannot convert from", "unit mismatch"),
+    ("cannot convert from", UNIT_MISMATCH),
     ("found '", "syntax error"),
     ("found an invalid token", "syntax error"),
     ("expected a value, instead found", "syntax error"),
@@ -427,6 +509,7 @@ pub(crate) fn shorten_error(error: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LineError;
 
     #[test]
     fn shown_value_groups_for_display_but_copies_plain() {
@@ -439,10 +522,57 @@ mod tests {
     #[test]
     fn shown_error_is_the_short_label_with_the_full_message_kept() {
         let raw = "unknown identifier 'metr'";
-        let shown = shown(&LineResult::Error(raw.into()), false).unwrap();
+        let shown = shown(&LineResult::Error(LineError::Fend(raw.into())), false).unwrap();
         assert_eq!(shown.text, "unknown metr");
         assert_eq!(shown.copy, "unknown metr");
         assert_eq!(shown.error.as_deref(), Some(raw));
+    }
+
+    #[test]
+    fn swap_separators_swaps_inside_numbers_only() {
+        for (point, comma) in [
+            ("1,234.5", "1.234,5"),
+            ("3,000,000", "3.000.000"),
+            ("$1,234.50", "$1.234,50"),
+            ("\u{2248} 1,234.5678 m", "\u{2248} 1.234,5678 m"),
+            ("1.5e3", "1,5e3"),
+            ("2 + 3.5", "2 + 3,5"),
+        ] {
+            assert_eq!(swap_separators(point), comma);
+            assert_eq!(swap_separators(comma), point, "and back");
+        }
+        for plain in [
+            "1234",
+            "5 m",
+            "November 15, 2027",
+            "Friday, 25 December 2026",
+            "a.b",
+        ] {
+            assert_eq!(swap_separators(plain), plain);
+        }
+    }
+
+    /// A swapped result copies in the form the same setting reads back.
+    #[test]
+    fn swapped_shown_swaps_the_text_the_copy_and_the_hover_but_not_an_error() {
+        let money = shown_value("1234567.891 USD").swapped();
+        assert_eq!(money.text, "$1.234.567,89");
+        assert_eq!(money.copy, "$1234567,89");
+
+        let inexact = shown_value("\u{2248} 1234.56789 m").swapped();
+        assert_eq!(inexact.text, "\u{2248} 1.234,5679 m");
+        assert_eq!(inexact.full.as_deref(), Some("\u{2248} 1.234,56789 m"));
+
+        let error = shown(
+            &LineResult::Error(LineError::Fend("5.5 is 3,000 too many".into())),
+            false,
+        )
+        .unwrap();
+        assert_eq!(error.clone().swapped(), error);
+    }
+
+    fn shown_value(value: &str) -> Shown {
+        shown(&LineResult::Value(value.into()), false).unwrap()
     }
 
     #[test]
@@ -603,9 +733,25 @@ mod tests {
     }
 
     #[test]
+    fn a_currency_without_a_symbol_rounds_and_keeps_its_code() {
+        assert_eq!(money("12.345 CAD", false), pair("12.35 CAD", "12.35 CAD"));
+        assert_eq!(money("5.5555 KWD", false), pair("5.556 KWD", "5.556 KWD"));
+        assert_eq!(money("5.5 ISK", false), pair("6 ISK", "6 ISK"));
+        assert_eq!(
+            money("1234.5 CHF", false),
+            pair("1,234.50 CHF", "1234.50 CHF")
+        );
+        assert_eq!(money("5.555 dollars", false), pair("$5.56", "$5.56"));
+        assert_eq!(money("2 euro", false), pair("\u{20ac}2.00", "\u{20ac}2.00"));
+        assert_eq!(money("12.345 CAD", true), pair("12.345 CAD", "12.345 CAD"));
+    }
+
+    #[test]
     fn non_currency_values_pass_through() {
         assert_eq!(money("50.8 cm", false), pair("50.8 cm", "50.8 cm"));
-        assert_eq!(money("12 XYZ", false), pair("12 XYZ", "12 XYZ"));
+        assert_eq!(money("5 btu", false), pair("5 btu", "5 btu"));
+        // A converter named in capitals is not a currency.
+        assert_eq!(money("1.2345 LAP", false), pair("1.2345 LAP", "1.2345 LAP"));
         assert_eq!(money("1e999 USD", false).0, "1e999 USD");
     }
 
@@ -657,33 +803,42 @@ mod tests {
         );
     }
 
+    /// Soos's own messages carry their labels (see [`crate::LineError::own`]), so each
+    /// is reached by a line that makes it, not by feeding its text to the
+    /// table of fend's wording.
     #[test]
-    fn shorten_error_labels_soos_own_messages() {
-        for (message, label) in [
-            ("a line in this block has an error", "error in block"),
-            (
-                "'total' is a built-in word and can't be a variable name",
-                "reserved name",
-            ),
-            (
-                "'x' is not a percent; 'on' needs one, like fee = 8%",
-                "not a percent",
-            ),
-            (
-                "write a date with @ in front, like @2026-12-25",
-                "date needs @",
-            ),
-            (
-                "today has no time of day; use now, like now + 2 hours",
-                "no time of day",
-            ),
-            ("nothing to average", "nothing to average"),
-            ("date out of range", "date out of range"),
+    fn soos_own_errors_show_their_labels() {
+        let too_long_block = format!("{}sum", "12\n".repeat(400));
+        let long_line = "1+".repeat(3000);
+        let too_nested = format!("{}1", "(".repeat(65));
+        for (document, label) in [
+            ("1 +\nsum", "error in block"),
+            ("total = 5", "reserved name"),
+            ("m = 5", "name in use"),
+            ("x = 2\nx on 10", "not a percent"),
+            ("50%\n10\nsum", "percent in block"),
+            ("avg", "nothing to average"),
+            ("$100 - 15%", "needs on or off"),
+            ("ans", "not a number"),
+            (too_long_block.as_str(), "too many lines"),
+            (long_line.as_str(), "too long"),
+            (too_nested.as_str(), "too nested"),
+            ("2026-12-25", "date needs @"),
+            ("tomorrow + 2 hours", "no time of day"),
+            ("3PM + 2", "needs a unit"),
+            ("3PM * 2", "unsupported time"),
+            ("now * 2", "unsupported date"),
+            ("2 days before blah", "invalid date"),
+            ("today + 999999999999999999 days", "date out of range"),
+            ("99:99PM", "not a time of day"),
+            ("2 before 3", "needs a date"),
         ] {
-            assert_eq!(shorten_error(message), label, "{message}");
+            let rates = crate::currency::RateSource::with_rates(&[]);
+            let (_, results) = crate::recalc_document(document, &[], &rates);
+            let last = shown(results.last().unwrap(), false).unwrap();
+            assert_eq!(last.text, label, "{document:.40}");
+            assert!(last.error.is_some(), "{document:.40}");
         }
-        let explained = crate::engine::eval_line(&mut fend_core::Context::new(), "now * 2");
-        assert_eq!(shorten_error(&explained.err().unwrap()), "unsupported date");
     }
 
     #[test]
