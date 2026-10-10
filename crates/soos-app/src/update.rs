@@ -1,6 +1,10 @@
 //! The version check against GitHub Releases.
 
-use super::*;
+use eframe::egui;
+
+use crate::status_bar::StatusMessage;
+use crate::style::Palette;
+use crate::{AppEvent, SoosApp};
 
 #[derive(serde::Deserialize)]
 pub(crate) struct GithubRelease {

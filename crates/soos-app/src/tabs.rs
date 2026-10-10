@@ -1,6 +1,11 @@
 //! Tabs: one document each, the tab strip, and its shortcuts.
 
-use super::*;
+use eframe::egui::{self, Color32};
+
+use crate::style::{
+    cap_center_offset, ink_center_offset, mono, Palette, CHAR_WIDTH, HOVER_BRIGHTEN,
+};
+use crate::SoosApp;
 
 /// One tab's document. `id` is never reused, so the editor keeps each tab's
 /// cursor and undo history apart however tabs are closed or reopened.
@@ -433,6 +438,13 @@ impl SoosApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui;
+    use soos_core::currency::RateSource;
+
+    use crate::recalc::Recalculator;
+    use crate::style::CHAR_WIDTH;
+    use crate::window::DEFAULT_WIDTH;
+    use crate::{SavedState, SoosApp};
 
     fn test_app(tabs: Vec<Tab>, active: usize) -> SoosApp {
         let saved = SavedState {

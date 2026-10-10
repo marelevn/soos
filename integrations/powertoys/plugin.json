@@ -4,7 +4,7 @@
   "IsGlobal": false,
   "Name": "Soos",
   "Author": "soos",
-  "Version": "1.0.4",
+  "Version": "1.0.5",
   "Language": "csharp",
   "Website": "https://github.com/marelevn/soos",
   "ExecuteFileName": "Community.PowerToys.Run.Plugin.Soos.dll",

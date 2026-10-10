@@ -32,22 +32,26 @@ use chrono::{DateTime, Local};
 pub mod currency;
 mod document;
 mod engine;
+mod error;
 pub mod format;
 pub mod highlight;
 mod preprocess;
 pub mod storage;
 
 pub use document::{LineResult, RawConverter, MAX_CONVERTERS};
+pub use error::LineError;
 
 /// A recalculated document: one result per converter (its value or why
 /// it's invalid), then one per line.
 pub type Recalculated = (Vec<Result<String, String>>, Vec<LineResult>);
 
-/// A fresh fend context with the currency handler and Soos's CSS units.
+/// A fresh fend context with the currency handler, Soos's CSS units and
+/// `root`.
 fn new_context(rates: &currency::RateSource) -> fend_core::Context {
     let mut ctx = fend_core::Context::new();
     ctx.set_exchange_rate_handler_v2(rates.clone());
     engine::register_builtin_units(&mut ctx);
+    engine::register_root(&mut ctx);
     ctx
 }
 
@@ -55,8 +59,11 @@ fn new_context(rates: &currency::RateSource) -> fend_core::Context {
 /// caps in [`engine`] bound fend's recursion; this makes sure recursion up
 /// to those caps fits, whichever thread calls in (a Windows GUI thread can
 /// have 1 MiB). One thread per recalculation, not per line.
+///
+/// A debug build gets 64 MiB: its frames are far bigger. Only touched pages
+/// are committed, so the larger reserve costs nothing until it is used.
 fn on_big_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    const STACK_SIZE: usize = 8 * 1024 * 1024;
+    const STACK_SIZE: usize = if cfg!(debug_assertions) { 64 } else { 8 } * 1024 * 1024;
     std::thread::scope(|scope| {
         std::thread::Builder::new()
             .stack_size(STACK_SIZE)
@@ -170,9 +177,22 @@ mod tests {
             dashes,
             power_tower,
             deep_parens,
-            "99:99pm in Tokyo".to_string(),
+            "99:99PM in Tokyo".to_string(),
             "\"unterminated".to_string(),
             "\u{1F600}\u{200F}\u{202E}".to_string(), // emoji + RTL marks
+            // fend prints a string literal as is, so its text is a "value":
+            // a leading space and a multibyte letter, then a multibyte digit
+            // under `in sci`.
+            "' \u{e9}'".to_string(),
+            "'\u{663}' in sci".to_string(),
+            // fend never checks its interrupt on these (see `engine::guard`):
+            // a long shift, dice that multiply their outcomes, and a unit
+            // raised to a large power.
+            "4 << 100000000".to_string(),
+            "0xff << 99999999999999999999".to_string(),
+            "1 << (100000000 in base 3)".to_string(),
+            "d1000 + d1000".to_string(),
+            "cm^400000 kg".to_string(),
             "1 + 1\r\n2 + 2\r\n".to_string(),
             huge_sum_block,
         ];
@@ -211,24 +231,14 @@ mod tests {
         assert_eq!(converter_results.len(), 1);
     }
 
-    /// 1 EUR = 2 USD, read from a cache file (read once, on construction).
-    fn fixed_rates(name: &str) -> currency::RateSource {
-        let dir = std::env::temp_dir().join(format!("soos-lib-{name}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("rates.json");
-        std::fs::write(
-            &path,
-            r#"{"rates":{"EUR":1.0,"USD":2.0},"fetched_at_unix":0,"source_version":2}"#,
-        )
-        .unwrap();
-        let rates = currency::RateSource::new(path);
-        let _ = std::fs::remove_dir_all(&dir);
-        rates
+    /// 1 EUR = 2 USD.
+    fn fixed_rates() -> currency::RateSource {
+        currency::RateSource::with_rates(&[("EUR", 1.0), ("USD", 2.0), ("GBP", 1.0), ("CAD", 1.0)])
     }
 
     #[test]
     fn evaluate_one_shows_what_the_app_shows() {
-        let rates = fixed_rates("shows");
+        let rates = fixed_rates();
         let shown = evaluate_one("Rent: $1234.5 * 2 // yearly", &[], &rates, false).unwrap();
         assert_eq!(shown.text, "$2,469.00");
         assert_eq!(shown.copy, "$2469.00");
@@ -242,20 +252,11 @@ mod tests {
     /// in, is the same amount in the same currency.
     #[test]
     fn copied_currency_results_read_back_as_the_same_value() {
-        let codes: Vec<String> = format::CURRENCY_STYLES
+        let pairs: Vec<(&str, f64)> = format::CURRENCY_STYLES
             .iter()
-            .map(|s| format!("\"{}\":2.0", s.code))
+            .map(|s| (s.code, 2.0))
             .collect();
-        let dir = std::env::temp_dir().join(format!("soos-lib-roundtrip-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("rates.json");
-        let json = format!(
-            r#"{{"rates":{{"EUR":1.0,{}}},"fetched_at_unix":0,"source_version":2}}"#,
-            codes.join(",")
-        );
-        std::fs::write(&path, json).unwrap();
-        let rates = currency::RateSource::new(path);
-        let _ = std::fs::remove_dir_all(&dir);
+        let rates = currency::RateSource::with_rates(&pairs);
 
         for style in format::CURRENCY_STYLES {
             for amount in ["1234567.891", "-42.5", "0.5"] {
@@ -311,6 +312,95 @@ mod tests {
             .map(|r| format::shown(r, false).unwrap().text)
             .collect();
         assert_eq!(shown, ["$5.00", "no rates yet", "no rates yet", "$10.00"]);
+    }
+
+    /// `$5 + 1` is `$6`, with a plain number in a variable's unit too.
+    #[test]
+    fn a_plain_number_added_to_money_is_money() {
+        let rates = fixed_rates();
+        let (_, results) = recalc_document(
+            "$5 + 1\n1 + $5\n$5 * 2 + 1\nrent = $1800\nrent + 50\n$5 + 1 EUR\n$5 + 1 in EUR\n($5 + 1) in EUR",
+            &[],
+            &rates,
+        );
+        let shown: Vec<_> = results
+            .iter()
+            .map(|r| format::shown(r, false).unwrap().text)
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                "$6.00",
+                "$6.00",
+                "$11.00",
+                "$1,800.00",
+                "$1,850.00",
+                "$7.00",
+                "\u{20ac}3.00",
+                "\u{20ac}3.00"
+            ]
+        );
+    }
+
+    /// A symbol after the number is the same amount as one before it, and
+    /// any currency rounds, not only the ones with a symbol.
+    #[test]
+    fn a_symbol_after_the_number_and_a_code_without_one_round() {
+        let rates = fixed_rates();
+        let (_, results) = recalc_document(
+            "5$\n1.234\u{20ac}\n5 \u{a3}\n12.345 CAD\n5.555 dollars",
+            &[],
+            &rates,
+        );
+        let shown: Vec<_> = results
+            .iter()
+            .map(|r| format::shown(r, false).unwrap().text)
+            .collect();
+        assert_eq!(
+            shown,
+            ["$5.00", "\u{20ac}1.23", "\u{a3}5.00", "12.35 CAD", "$5.56"]
+        );
+    }
+
+    /// A currency code is a unit too: `EUR = 2` would make `5 EUR` 10.
+    #[test]
+    fn a_variable_cannot_take_a_currency_code() {
+        let rates = fixed_rates();
+        let (_, results) = recalc_document("EUR = 2\n5 EUR\n$5 + 1", &[], &rates);
+        let shown: Vec<_> = results
+            .iter()
+            .map(|r| format::shown(r, false).unwrap().text)
+            .collect();
+        assert_eq!(shown, ["name in use", "\u{20ac}5.00", "$6.00"]);
+    }
+
+    /// The length and nesting caps are meant to keep recursion inside the
+    /// recalculation thread's stack, a debug build's bigger frames included.
+    /// A block this long gets through them, so its `sum` has to fit.
+    #[test]
+    fn a_sum_over_a_long_block_fits_the_stack() {
+        let rates = fixed_rates();
+        for line in ["1234567.89 USD", "1234.5", "1/3"] {
+            let block = format!("{}sum", format!("{line}\n").repeat(120));
+            let (_, results) = recalc_document(&block, &[], &rates);
+            assert!(
+                matches!(results.last(), Some(LineResult::Value(_))),
+                "{line}: {:?}",
+                results.last()
+            );
+        }
+    }
+
+    /// The block is written into the `sum` line, which has a length cap, so
+    /// a very long block says so instead of "too long" on a one-word line.
+    #[test]
+    fn a_block_too_long_to_add_up_says_so() {
+        let rates = fixed_rates();
+        let block = format!("{}sum", "12\n".repeat(400));
+        let (_, results) = recalc_document(&block, &[], &rates);
+        let last = format::shown(results.last().unwrap(), false).unwrap();
+        assert_eq!(last.text, "too many lines");
+        assert!(last.error.unwrap().contains("start a new block"));
     }
 
     /// A cancelled recalculation stops inside a slow line, not after it.

@@ -1,6 +1,11 @@
 //! The read-only worked example behind the status bar's `?`.
 
-use super::*;
+use eframe::egui;
+
+use crate::editor::build_layout_job;
+use crate::style::{text_format, Palette};
+use crate::tray::FULL_DESKTOP;
+use crate::window::modal_room;
 
 /// Each line and the result the app shows for it. A fixed list, so the
 /// overlay never depends on the network or the clock; the test below checks
@@ -55,10 +60,13 @@ pub(crate) const EXAMPLE_LINES: &[(&str, Option<&str>)] = &[
     ("// Define your own units with \u{2194} below.", None),
     ("", None),
     ("# Dates and time zones", None),
-    ("today + 17 days", Some("2026-10-02")),
+    ("today + 17 days", Some("Friday, 2 October 2026")),
     ("@2026-12-25", Some("Friday, 25 December 2026")),
-    ("now in Tokyo", Some("2026-09-15 08:45 JST")),
-    ("9am PST to Tokyo", Some("2026-09-15 01:00 JST")),
+    ("now in Tokyo", Some("Tuesday, 15 September 2026 08:45 JST")),
+    (
+        "9AM PST to Tokyo",
+        Some("Tuesday, 15 September 2026 01:00 JST"),
+    ),
     ("", None),
     ("# The status bar", None),
     ("// \u{2194} converters   ? this example", None),
@@ -107,22 +115,14 @@ pub(crate) fn example_preview(ui: &mut egui::Ui, palette: Palette) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soos_core::currency::RateSource;
 
     /// The whole list runs as one document, as in the app, at 23:45 UTC on
     /// 2026-09-14, with 1 EUR = 1 USD = 26,125 VND. `today` lines depend on
     /// this machine's zone, so they're only illustrative.
     #[test]
     fn example_lines_match_the_engine() {
-        let dir = std::env::temp_dir().join(format!("soos-example-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let rates_path = dir.join("rates.json");
-        std::fs::write(
-            &rates_path,
-            r#"{"rates":{"EUR":1.0,"USD":1.0,"VND":26125.0},"fetched_at_unix":0,"source_version":2}"#,
-        )
-        .unwrap();
-        let rates = RateSource::new(rates_path);
-        let _ = std::fs::remove_dir_all(&dir);
+        let rates = RateSource::with_rates(&[("EUR", 1.0), ("USD", 1.0), ("VND", 26125.0)]);
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_789_429_500);
 
         let document: Vec<&str> = EXAMPLE_LINES.iter().map(|(line, _)| *line).collect();

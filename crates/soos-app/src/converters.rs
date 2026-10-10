@@ -1,6 +1,10 @@
 //! The converters table: the user's own units, kept apart from the document.
 
-use super::*;
+use eframe::egui::{self, Color32, RichText};
+use soos_core::format::swap_separators;
+
+use crate::style::{centered_button, mono, Palette, CHAR_WIDTH};
+use crate::window::{modal_room, MODAL_GAP};
 
 /// One row of the table, as typed: `unit` = `factor` × `base`, `aliases`
 /// comma-separated. soos-core validates it on every recalculation.
@@ -105,6 +109,7 @@ pub(crate) fn converters_window(
     converters: &mut Vec<ConverterRow>,
     results: &[Result<String, String>],
     focus_row: &mut Option<usize>,
+    decimal_comma: bool,
 ) {
     ui.style_mut().spacing.button_padding = CONVERTER_BUTTON_PADDING;
     ui.style_mut().spacing.item_spacing.x = CONVERTER_ITEM_GAP;
@@ -215,7 +220,12 @@ pub(crate) fn converters_window(
                         } else {
                             match results.get(i) {
                                 Some(Ok(d)) => {
-                                    converter_status_cell(ui, d, palette.result, row_height)
+                                    let d = if decimal_comma {
+                                        swap_separators(d)
+                                    } else {
+                                        d.clone()
+                                    };
+                                    converter_status_cell(ui, &d, palette.result, row_height)
                                 }
                                 Some(Err(e)) => {
                                     converter_status_cell(ui, e, palette.error, row_height)

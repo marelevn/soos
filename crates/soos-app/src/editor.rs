@@ -3,14 +3,19 @@
 //! line's result painted in a column beside it. A wrapped line's result sits
 //! beside its first row.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use egui::text::{CCursor, CCursorRange};
+use eframe::egui;
+use eframe::egui::text::{CCursor, CCursorRange, LayoutJob};
+use soos_core::format::Shown;
+use soos_core::highlight::TokenKind;
+use soos_core::LineResult;
 
-use super::*;
+use crate::style::{mono, mono_bold, text_format, text_format_in, Palette, CHAR_WIDTH};
+use crate::SoosApp;
 
 /// Shown in an empty document.
-pub(crate) const PLACEHOLDER: &str = "Type a calculation, like $120 - 15%";
+pub(crate) const PLACEHOLDER: &str = "Type a calculation, like 15% off $120";
 
 /// How far out-of-date results fade toward the background.
 const STALE_DIM: f32 = 0.55;
@@ -80,17 +85,26 @@ pub(crate) fn is_total(line: &str) -> bool {
         })
 }
 
-/// A cell per line of `text`, `None` where the line shows nothing.
+/// A cell per line of `text`, `None` where the line shows nothing. With
+/// `decimal_comma`, each result is shown with `.` and `,` swapped. That is
+/// done here, on the way to the screen, so `results` stay in the form the
+/// engine made them and a toggle can't leave them half swapped.
 pub(crate) fn result_cells(
     text: &str,
     results: &[LineResult],
     high_precision: bool,
+    decimal_comma: bool,
 ) -> Vec<Option<Cell>> {
     text.split('\n')
         .enumerate()
         .map(|(i, line)| {
+            let shown = soos_core::format::shown(results.get(i)?, high_precision)?;
             Some(Cell {
-                shown: soos_core::format::shown(results.get(i)?, high_precision)?,
+                shown: if decimal_comma {
+                    shown.swapped()
+                } else {
+                    shown
+                },
                 total: is_total(line),
             })
         })
@@ -167,8 +181,12 @@ impl SoosApp {
                 .show(ui, |ui| {
                     egui::Frame::new().inner_margin(page_margin).show(ui, |ui| {
                         let available_width = ui.available_width();
-                        let cells =
-                            result_cells(self.active_text(), &self.results, self.high_precision);
+                        let cells = result_cells(
+                            self.active_text(),
+                            &self.results,
+                            self.high_precision,
+                            self.decimal_comma,
+                        );
                         let gutter_width = gutter_width(&cells, available_width);
                         let text_width = (available_width - gutter_width - COLUMN_GAP).max(100.0);
                         let mut layouter =
@@ -322,16 +340,46 @@ impl SoosApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use soos_core::LineResult;
 
     fn value(s: &str) -> LineResult {
         LineResult::Value(s.to_owned())
     }
 
     fn texts(text: &str, results: &[LineResult]) -> Vec<Option<String>> {
-        result_cells(text, results, false)
+        texts_with(text, results, false)
+    }
+
+    fn texts_with(text: &str, results: &[LineResult], decimal_comma: bool) -> Vec<Option<String>> {
+        result_cells(text, results, false, decimal_comma)
             .into_iter()
             .map(|cell| cell.map(|cell| cell.shown.text))
             .collect()
+    }
+
+    /// Swapped on the way to the screen: dates and errors are left alone.
+    #[test]
+    fn the_decimal_comma_swaps_values_and_leaves_dates_and_errors() {
+        let text = "a\nb\nc\nd";
+        let results = [
+            value("1234567.5 USD"),
+            value("1234.5 m"),
+            LineResult::Date("Friday, 25 December 2026".to_owned()),
+            LineResult::Error("unknown identifier 'x.5'".to_owned().into()),
+        ];
+        assert_eq!(
+            texts_with(text, &results, true),
+            [
+                Some("$1.234.567,50".to_owned()),
+                Some("1.234,5 m".to_owned()),
+                Some("Friday, 25 December 2026".to_owned()),
+                Some("unknown x.5".to_owned()),
+            ]
+        );
+        assert_eq!(
+            texts_with(text, &results, false)[1].as_deref(),
+            Some("1,234.5 m")
+        );
     }
 
     /// Every result is painted as it's formatted, with no padding to line
@@ -366,10 +414,10 @@ mod tests {
         let text = "a\nb\n\nc\nd";
         let results = [
             value("1.5"),
-            LineResult::Error("unknown identifier 'x'".to_owned()),
+            LineResult::Error("unknown identifier 'x'".to_owned().into()),
             LineResult::Blank,
             value("100"),
-            LineResult::Date("2026-09-30".to_owned()),
+            LineResult::Date("Wednesday, 30 September 2026".to_owned()),
         ];
         assert_eq!(
             texts(text, &results),
@@ -378,7 +426,7 @@ mod tests {
                 Some("unknown x".to_owned()),
                 None,
                 Some("100".to_owned()),
-                Some("2026-09-30".to_owned()),
+                Some("Wednesday, 30 September 2026".to_owned()),
             ]
         );
     }

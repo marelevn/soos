@@ -3,9 +3,13 @@
 //! the UI thread would hold up typing.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use super::*;
+use eframe::egui;
+use soos_core::currency::RateSource;
+use soos_core::LineResult;
 
 /// Once results have been out of date this long, they're drawn dimmed.
 pub(crate) const STALE_AFTER: Duration = Duration::from_millis(150);
@@ -114,6 +118,11 @@ impl Recalculator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
+
+    use eframe::egui;
+    use soos_core::currency::RateSource;
+    use soos_core::LineResult;
 
     #[test]
     fn a_newer_edit_replaces_a_slow_one() {

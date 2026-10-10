@@ -1,6 +1,8 @@
 //! Fonts, colours, and the small drawing helpers every surface uses.
 
-use super::*;
+use std::sync::Arc;
+
+use eframe::egui::{self, Color32, FontId, TextFormat, Theme};
 
 pub(crate) const FONT_SIZE: f32 = 16.0;
 
@@ -256,6 +258,9 @@ pub(crate) fn centered_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::{self, Color32, FontId};
+
+    use crate::tabs::tab_bar_fill;
 
     /// WCAG 2 contrast ratio between two sRGB colours.
     fn contrast(a: Color32, b: Color32) -> f32 {

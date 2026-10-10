@@ -1,0 +1,7 @@
+20 sq cm            20 cm^2
+30 square inches    30 inches^2
+20 cu cm            20 cm^3
+11 cbm              11 m^3
+5 ft 11 in to cm    180.34 cm
+20 inches in cm     50.8 cm
+16 px in pt         12 pt

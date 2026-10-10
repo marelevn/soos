@@ -1,7 +1,13 @@
 //! Window sizes, and the shared frame for the example and converters
 //! overlays.
 
-use super::*;
+use eframe::egui::{self, ViewportCommand};
+
+use crate::converters::CONVERTERS_GRID_WIDTH;
+use crate::editor::{APP_PADDING, COLUMN_GAP, MIN_GUTTER};
+use crate::example::EXAMPLE_COLUMN;
+use crate::style::{Palette, CHAR_WIDTH};
+use crate::SoosApp;
 
 /// Space between elements inside an overlay.
 pub(crate) const MODAL_GAP: f32 = 12.0;
