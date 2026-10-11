@@ -2,6 +2,8 @@
 //! `sum`/`total` and `avg`/`average` reach across lines by substituting
 //! literal values before a line reaches fend, which only sees one line.
 
+use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::LazyLock;
 
 use chrono::{DateTime, Local};
@@ -9,8 +11,10 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::engine;
+use crate::error::LineError;
 use crate::highlight::{CONVERSION_WORD, DATE_WORD};
-use crate::preprocess::{self, INTO_WORD, TIMES_WORD};
+use crate::preprocess::{self, INTO_WORD, OPERATOR_WORD};
+use crate::watchdog;
 
 /// One document line's outcome -- see [`recalc`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,12 +30,12 @@ pub enum LineResult {
     Value(String),
     /// A date or time, shown as is and left out of `prev`/`sum`/`avg`.
     Date(String),
-    /// The full error message.
-    Error(String),
+    /// Why the line has no result.
+    Error(LineError),
 }
 
 /// One converter: `unit` = `factor` × `base`, with `aliases` as extra names.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RawConverter {
     pub unit: String,
     pub aliases: Vec<String>,
@@ -45,9 +49,19 @@ pub struct RawConverter {
 static CONVERTER_NAME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[A-Za-z][A-Za-z0-9_]{0,23}$").unwrap());
 
+/// A converter factor with nothing in it that could assign a variable or
+/// name a unit.
+static ARITHMETIC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[0-9.eE+*/^() -]+$").unwrap());
+
 /// The most converters the table may hold. Each costs a define and a check
 /// on every recalculation.
 pub const MAX_CONVERTERS: usize = 64;
+
+/// The largest power of units a converter's base may hold (`kg m^2 / s^3`
+/// is 6). The engine's guard counts a converter at its base's power (see
+/// [`engine::add_converter_power`]), so this is a second line of defence,
+/// to loosen once a line fend can't interrupt can be given up on.
+const MAX_BASE_POWER: u64 = 6;
 
 /// `name = ...` at the start of a line (but not `==`).
 static ASSIGNMENT: LazyLock<Regex> =
@@ -60,15 +74,37 @@ fn is_reserved_word(name: &str) -> bool {
         || SUM.is_match(name)
         || AVG.is_match(name)
         || INTO_WORD.is_match(name)
-        || TIMES_WORD.is_match(name)
+        || OPERATOR_WORD.is_match(name)
         || CONVERSION_WORD.is_match(name)
         || DATE_WORD.is_match(name)
 }
 
+/// The variable a line assigns to (`rent` in `rent = 1800`), if any.
+fn assigned_name(expr: &str) -> Option<&str> {
+    Some(ASSIGNMENT.captures(expr)?.name("name")?.as_str())
+}
+
 /// The reserved word a line assigns to (`total = 5`), if any.
 fn reserved_assignment(expr: &str) -> Option<&str> {
-    let name = ASSIGNMENT.captures(expr)?.name("name")?.as_str();
+    let name = assigned_name(expr)?;
     is_reserved_word(name).then_some(name)
+}
+
+/// Whether a variable called `name` would take over a unit (`m`, `min`,
+/// `EUR`, a converter) or a constant (`e`, `k`): `m = 5` would make every
+/// `1 m` below it 5, with no error anywhere. A single letter fend only finds
+/// by its other case is free: `a` finds ampere's `A`, which stays `A`.
+fn takes_over_a_unit(ctx: &mut fend_core::Context, name: &str) -> bool {
+    let own = format!("1 {name}");
+    match engine::eval_line(ctx, &own) {
+        Err(_) => false,
+        Ok(found) => {
+            let by_other_case = name.chars().count() == 1
+                && found.display != own
+                && found.display.eq_ignore_ascii_case(&own);
+            !by_other_case
+        }
+    }
 }
 
 /// Whether `needle` is a whole word in `haystack`.
@@ -105,7 +141,7 @@ fn define_converter(
     ctx: &mut fend_core::Context,
     conv: &RawConverter,
     defined_so_far: usize,
-) -> Result<String, String> {
+) -> Result<(String, u64), String> {
     if defined_so_far >= MAX_CONVERTERS {
         return Err("too many converters".to_string());
     }
@@ -137,16 +173,33 @@ fn define_converter(
     }
     // An unknown name in the base is usually a converter defined further
     // down the table, which the table's reorder buttons fix.
-    if let Err(e) = engine::eval_line(ctx, &format!("1 {}", conv.base)) {
-        let message = if e.starts_with("unknown identifier") {
-            "define base first"
-        } else {
-            "invalid base"
-        };
-        return Err(message.to_string());
+    let base = match engine::eval_line(ctx, &format!("1 {}", conv.base)) {
+        Ok(base) => base.display,
+        Err(e) => {
+            let unknown = matches!(&e, LineError::Fend(m) if m.starts_with("unknown identifier"));
+            let message = if unknown {
+                "define base first"
+            } else {
+                "invalid base"
+            };
+            return Err(message.to_string());
+        }
+    };
+    // fend's display writes every power as `name^digits` (`(cm)^9999` and
+    // `cm**9999` show as `1 cm^9999`).
+    let power = engine::units_shown(&base, &engine::converter_power);
+    if power > MAX_BASE_POWER {
+        return Err("base power too large".to_string());
     }
 
-    let definition = format!("{factor} {}", conv.base);
+    // The factor as typed when it is only arithmetic, so `1/7` stays exact:
+    // `parse_factor` has only fend's 10-digit display of it. Without its
+    // spaces, so `1 000` is one number, as in a line.
+    let definition = if ARITHMETIC.is_match(conv.factor.trim()) {
+        format!("({}) {}", conv.factor.replace(' ', ""), conv.base)
+    } else {
+        format!("{factor} {}", conv.base)
+    };
     engine::define_unit(ctx, &conv.unit, &definition);
 
     let mut skipped: Vec<&str> = Vec::new();
@@ -167,11 +220,11 @@ fn define_converter(
         .map_err(|_| "invalid base".to_string())?
         .display;
     if skipped.is_empty() {
-        Ok(display)
+        Ok((display, power))
     } else {
-        Ok(format!(
-            "{display} \u{b7} skipped: {}",
-            join_skipped(&skipped)
+        Ok((
+            format!("{display} \u{b7} skipped: {}", join_skipped(&skipped)),
+            power,
         ))
     }
 }
@@ -198,14 +251,249 @@ pub(crate) fn define_converters(
 ) -> Vec<Result<String, String>> {
     let mut results = Vec::with_capacity(converters.len());
     let mut defined = 0usize;
-    for conv in converters {
-        let r = define_converter(ctx, conv, defined);
-        if r.is_ok() {
+    // Each converter's power is known before the next row's base is checked,
+    // so a base built on an earlier converter (`bigY^8000 kg`) is counted in
+    // full, not as one unit.
+    engine::clear_converter_powers();
+    for (row, conv) in converters.iter().enumerate() {
+        // A row depends on the rows above it.
+        let key = converters_key(&converters[..=row]);
+        let r = watchdog::watch(key, || define_converter(ctx, conv, defined))
+            .unwrap_or_else(|| Err("too complex".to_string()));
+        if let Ok((_, power)) = r {
             defined += 1;
+            for name in std::iter::once(&conv.unit).chain(&conv.aliases) {
+                engine::add_converter_power(name, power);
+            }
         }
-        results.push(r);
+        results.push(r.map(|(display, _)| display));
     }
     results
+}
+
+/// `converters` as a number, for [`LineKeys`] and the watchdog.
+pub(crate) fn converters_key(converters: &[RawConverter]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    converters.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// What a line's result depends on, as one number: its text, the
+/// converters, the lines that last assigned the names it uses, and the lines
+/// `prev`, `sum` and `avg` stand for. A line that ran too long is refused by
+/// this key (see [`watchdog`]), so it runs again once one of those changes,
+/// and not when another line does.
+struct LineKeys {
+    /// The converters'.
+    seed: u64,
+    /// Each name, from the line that last assigned it.
+    assigned: HashMap<String, Assigned>,
+    /// Every expression line's so far, since `ans` is fend's last answer.
+    ans: u64,
+}
+
+/// A name in [`LineKeys`].
+struct Assigned {
+    /// The key of the line that assigned it.
+    key: u64,
+    /// For a function (or an alias, `h = g`), the names its body looks up,
+    /// once per use: fend looks them up when the function is called, so they
+    /// count as used by the line that calls it. A plain value was worked out
+    /// on its own line, whose key covers what it used, so it keeps none.
+    calls: Vec<String>,
+    function: bool,
+    /// How deeply the assigning line nests (`engine::expr_nesting_depth`).
+    nesting: u64,
+}
+
+/// The most stack a line may need for the functions it calls, in nesting
+/// levels (see [`LineKeys::refused`]). A stack overflow ends the process, so
+/// this is well under what overflows: a chain of 1,450 small functions, or
+/// of 97 with 55 brackets each, in a release build; half that in a debug
+/// build, whose frames are bigger.
+const MAX_CALL_WEIGHT: u64 = 1_000;
+/// A call's own frames, in nesting levels, measured from those chains.
+const CALL_COST: u64 = 2;
+
+impl LineKeys {
+    fn new(seed: u64) -> Self {
+        Self {
+            seed,
+            assigned: HashMap::new(),
+            ans: seed,
+        }
+    }
+
+    fn of(&self, expr: &str, running: &RunningValues) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        (self.seed, expr).hash(&mut hasher);
+        let mut todo: Vec<&str> = words(expr).collect();
+        let mut seen = HashSet::new();
+        while let Some(word) = todo.pop() {
+            if !seen.insert(word) {
+                continue;
+            }
+            if matches!(word, "ans" | "_") {
+                self.ans.hash(&mut hasher);
+            } else if let Some(name) = self.assigned.get(word) {
+                (word, name.key).hash(&mut hasher);
+                todo.extend(name.calls.iter().map(String::as_str));
+            }
+        }
+        if PREV.is_match(expr) {
+            running.prev_from.hash(&mut hasher);
+        }
+        if SUM.is_match(expr) || AVG.is_match(expr) {
+            for held in &running.block {
+                held.from.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    /// Records the line `key` once it has run. A line refused before fend
+    /// saw it assigned nothing.
+    fn after(&mut self, expr: &str, key: u64, refused: bool) {
+        let mut hasher = DefaultHasher::new();
+        (self.ans, key).hash(&mut hasher);
+        self.ans = hasher.finish();
+        if let Some((name, calls, function)) = self.definition(expr).filter(|_| !refused) {
+            let nesting = engine::expr_nesting_depth(expr).unwrap_or(usize::MAX) as u64;
+            let name = name.to_string();
+            let assigned = Assigned {
+                key,
+                calls,
+                function,
+                nesting,
+            };
+            self.assigned.insert(name, assigned);
+        }
+    }
+
+    /// Why fend mustn't run `expr`, a line about to be evaluated, if it
+    /// mustn't. fend runs a function by recursing, so a function that calls
+    /// itself recurses until the stack overflows, which ends the process,
+    /// and so do functions called inside each other deeply enough. The first
+    /// is refused where it's defined; the second where it's called.
+    fn refused(&self, expr: &str) -> Option<LineError> {
+        if let Some((name, calls, true)) = self.definition(expr) {
+            return self
+                .reaches(&calls, name)
+                .then(|| LineError::own(engine::CALLS_ITSELF, "calls itself"));
+        }
+        let calls_a_function =
+            words(expr).any(|word| self.assigned.get(word).is_some_and(|a| a.function));
+        if !calls_a_function {
+            return None;
+        }
+        let nesting = engine::expr_nesting_depth(expr).unwrap_or(0) as u64;
+        let calls: Vec<String> = words(expr).map(str::to_string).collect();
+        let weight = self.body_weight(&calls, nesting, &mut HashMap::new(), &mut Vec::new());
+        (weight > MAX_CALL_WEIGHT).then(|| {
+            LineError::own(
+                "these functions are called inside each other too deeply to calculate",
+                "too nested",
+            )
+        })
+    }
+
+    /// Whether any of `calls`, or the functions they call, is `target`.
+    fn reaches(&self, calls: &[String], target: &str) -> bool {
+        let mut todo: Vec<&str> = calls.iter().map(String::as_str).collect();
+        let mut seen = HashSet::new();
+        while let Some(name) = todo.pop() {
+            if name == target {
+                return true;
+            }
+            if seen.insert(name) {
+                if let Some(assigned) = self.assigned.get(name) {
+                    todo.extend(assigned.calls.iter().map(String::as_str));
+                }
+            }
+        }
+        false
+    }
+
+    /// The stack a body of `nesting` that uses `calls` needs, in nesting
+    /// levels: its own nesting, plus, for each call to a function, the
+    /// weight of the heaviest one. fend runs an argument inside the call it
+    /// is passed to, so calls inside calls add up: `g(g(1))` needs twice
+    /// what `g(1)` does.
+    fn body_weight(
+        &self,
+        calls: &[String],
+        nesting: u64,
+        memo: &mut HashMap<String, u64>,
+        calling: &mut Vec<String>,
+    ) -> u64 {
+        let (count, heaviest) = calls
+            .iter()
+            .map(|name| self.weight(name, memo, calling))
+            .filter(|&weight| weight > 0)
+            .fold((0u64, 0u64), |(count, heaviest), weight| {
+                (count + 1, heaviest.max(weight))
+            });
+        nesting.saturating_add(count.saturating_mul(heaviest))
+    }
+
+    /// A function's weight (see [`LineKeys::body_weight`]) with its call;
+    /// 0 for anything else.
+    fn weight(
+        &self,
+        name: &str,
+        memo: &mut HashMap<String, u64>,
+        calling: &mut Vec<String>,
+    ) -> u64 {
+        if let Some(&weight) = memo.get(name) {
+            return weight;
+        }
+        let Some(assigned) = self.assigned.get(name).filter(|a| a.function) else {
+            return 0;
+        };
+        if calling.iter().any(|c| c == name) {
+            return u64::MAX;
+        }
+        calling.push(name.to_string());
+        let weight = self
+            .body_weight(&assigned.calls, assigned.nesting, memo, calling)
+            .saturating_add(CALL_COST);
+        calling.pop();
+        memo.insert(name.to_string(), weight);
+        weight
+    }
+
+    /// The name a line assigns, the names it calls, and whether it defines a
+    /// function: a lambda, or another name for one (`h = g`). Only a function
+    /// keeps its calls; its own arguments aren't the variables of that name.
+    fn definition<'e>(&self, expr: &'e str) -> Option<(&'e str, Vec<String>, bool)> {
+        let name = assigned_name(expr)?;
+        let arguments = engine::function_arguments(expr);
+        let rhs = expr.split_once('=').map_or("", |(_, rhs)| rhs);
+        let mut rhs_words = words(rhs).filter(|w| !w.is_empty());
+        // fend copies the function: `h = g` calls what `g`'s body calls.
+        let alias = match (rhs_words.next(), rhs_words.next()) {
+            (Some(only), None) => self.assigned.get(only).filter(|a| a.function),
+            _ => None,
+        };
+        if let Some(aliased) = alias {
+            return Some((name, aliased.calls.clone(), true));
+        }
+        let function = !arguments.is_empty();
+        let calls = if function {
+            words(rhs)
+                .filter(|w| !w.is_empty() && !arguments.contains(w))
+                .map(str::to_string)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Some((name, calls, function))
+    }
+}
+
+/// The words of `text`, for [`LineKeys`].
+fn words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| !c.is_alphanumeric() && c != '_')
 }
 
 /// `prev`: the last successful line's value. `pub(crate)`, like [`SUM`] and
@@ -221,7 +509,12 @@ pub(crate) static AVG: LazyLock<Regex> =
 /// `avg` substitute, `unit` its unit (`m`, `USD`; empty for a plain number).
 struct Held {
     reference: String,
+    /// The key of the line it came from.
+    from: u64,
     unit: String,
+    /// Shown as a percent (`50 as a % of 100` is 50%), which `sum` keeps
+    /// apart from amounts.
+    percent: bool,
 }
 
 /// What `prev` and the aggregates can see at the current line. `prev`
@@ -232,16 +525,23 @@ struct Held {
 #[derive(Default)]
 struct RunningValues {
     prev: Option<String>,
+    /// The key of the line `prev` came from.
+    prev_from: u64,
     /// The block's plain (non-aggregate) lines.
     block: Vec<Held>,
     /// A plain line in the block has an error, so a total would be wrong.
     block_has_error: bool,
+    /// The variables this document has assigned, which may be assigned again
+    /// even when their name is also a unit's.
+    assigned: HashSet<String>,
 }
 
 /// The unit after a value's number (`"258990.56 VND"` -> `"VND"`).
 fn unit_of(value: &str) -> &str {
-    let number = value.split_whitespace().next().unwrap_or(value);
-    value[number.len()..].trim()
+    value
+        .trim()
+        .split_once(char::is_whitespace)
+        .map_or("", |(_, unit)| unit.trim())
 }
 
 /// The one unit the block's unit-bearing values share, if exactly one:
@@ -295,12 +595,14 @@ fn substitute_tokens(expr: &str, running: &RunningValues, promote_to: Option<&st
                 _ => held.reference.clone(),
             })
             .collect();
-        let sum = balanced_sum(&values);
+        // One operand, like `prev`: unwrapped, `sum * 2` would multiply only
+        // the block's last term.
+        let sum = format!("({})", balanced_sum(&values));
         if SUM.is_match(&out) {
             out = SUM.replace_all(&out, sum.as_str()).into_owned();
         }
         if AVG.is_match(&out) {
-            let avg = format!("(({sum}) / {})", running.block.len().max(1));
+            let avg = format!("({sum} / {})", running.block.len().max(1));
             out = AVG.replace_all(&out, avg.as_str()).into_owned();
         }
     }
@@ -314,28 +616,61 @@ fn eval_expr(
     aggregate: bool,
     running: &RunningValues,
     now: DateTime<Local>,
-) -> Result<engine::Evaluated, String> {
+) -> Result<engine::Evaluated, LineError> {
     if let Some(name) = reserved_assignment(expr) {
-        return Err(format!(
-            "'{name}' is a built-in word and can't be a variable name"
+        return Err(LineError::own(
+            format!("'{name}' is a built-in word and can't be a variable name"),
+            "reserved name",
         ));
+    }
+    if running.prev.is_none() && PREV.is_match(expr) {
+        return Err(LineError::own(
+            "prev needs a result on a line above",
+            "nothing above",
+        ));
+    }
+    if let Some(name) = assigned_name(expr) {
+        if !running.assigned.contains(name) && takes_over_a_unit(ctx, name) {
+            return Err(LineError::own(
+                format!("'{name}' is already a unit or constant; pick another name"),
+                "name in use",
+            ));
+        }
     }
     if aggregate {
         if running.block_has_error {
-            return Err("a line in this block has an error".to_string());
+            return Err(LineError::own(
+                "a line in this block has an error",
+                "error in block",
+            ));
         }
         if AVG.is_match(expr) && running.block.is_empty() {
-            return Err("nothing to average".to_string());
+            return Err(LineError::plain("nothing to average"));
+        }
+        let percents = running.block.iter().filter(|held| held.percent).count();
+        if percents > 0 && percents < running.block.len() {
+            return Err(LineError::own(
+                "can't add a percent to amounts; take it off the total, like 10% off sum",
+                "percent in block",
+            ));
         }
     }
     let evaluated = engine::eval_line_at(ctx, &substitute_tokens(expr, running, None), now);
     let Err(error) = &evaluated else {
         return evaluated;
     };
+    // The block is written into the line, which has a length cap: a long
+    // block fails on a line that only says `sum`.
+    if aggregate && matches!(error, LineError::TooLong) {
+        return Err(LineError::own(
+            "too many lines to add up; start a new block",
+            "too many lines",
+        ));
+    }
     // A block of one unit plus plain numbers (`5 m`, `3`) can't be added
     // as is; count the plain numbers as that unit. Two different units
     // (`5 m`, `3 kg`) stay an error.
-    if !aggregate || crate::format::shorten_error(error) != "unit mismatch" {
+    if !aggregate || !error.is_unit_mismatch() {
         return evaluated;
     }
     let Some(unit) = common_unit(&running.block) else {
@@ -347,17 +682,40 @@ fn eval_expr(
     }
 }
 
+/// A line that ends in a function (`ans`, `root`, a leftover `Q1:500`) has
+/// no value to show, and `prev` and `sum` couldn't use it. An assignment may
+/// still hold one: `f = \x.x * 2`.
+fn reject_a_function(
+    expr: &str,
+    evaluated: engine::Evaluated,
+) -> Result<engine::Evaluated, LineError> {
+    let is_function = evaluated
+        .value
+        .as_deref()
+        .is_some_and(|value| value.starts_with('\\'));
+    if is_function && !ASSIGNMENT.is_match(expr) {
+        return Err(LineError::own(
+            "that is a function, not a number",
+            "not a number",
+        ));
+    }
+    Ok(evaluated)
+}
+
 /// Recalculate every line of `source`, one [`LineResult`] per line. `ctx`
 /// must be freshly set up by the caller: every call re-evaluates the whole
 /// document, which keeps "a line above changed" simple. Each line is capped
 /// in length, nesting and time, so the cost grows linearly with line count.
+/// `seed` is [`converters_key`] of the converters in `ctx`.
 pub(crate) fn recalc(
     ctx: &mut fend_core::Context,
     source: &str,
     now: DateTime<Local>,
+    seed: u64,
 ) -> Vec<LineResult> {
     let mut results = Vec::new();
     let mut running = RunningValues::default();
+    let mut keys = LineKeys::new(seed);
 
     for (number, raw_line) in source.lines().enumerate() {
         if engine::cancelled() {
@@ -372,7 +730,18 @@ pub(crate) fn recalc(
             Ok(expr) => {
                 let aggregate = reserved_assignment(&expr).is_none()
                     && (SUM.is_match(&expr) || AVG.is_match(&expr));
-                match eval_expr(ctx, &expr, aggregate, &running, now) {
+                let key = keys.of(&expr, &running);
+                let refused = keys.refused(&expr);
+                let evaluated = match refused.clone() {
+                    Some(error) => Err(error),
+                    None => watchdog::watch(key, || {
+                        eval_expr(ctx, &expr, aggregate, &running, now)
+                            .and_then(|ev| reject_a_function(&expr, ev))
+                    })
+                    .unwrap_or_else(|| Err(watchdog::too_complex())),
+                };
+                keys.after(&expr, key, refused.is_some());
+                match evaluated {
                     Err(e) => {
                         if !aggregate {
                             running.block_has_error = true;
@@ -381,6 +750,9 @@ pub(crate) fn recalc(
                     }
                     Ok(ev) => match ev.value {
                         Some(value) => {
+                            if let Some(name) = assigned_name(&expr) {
+                                running.assigned.insert(name.to_string());
+                            }
                             // Shown exactly, a result reads back as its
                             // text. An inexact one is kept at full precision
                             // in a hidden variable, so `sqrt(2)`, then
@@ -392,10 +764,14 @@ pub(crate) fn recalc(
                                 value.clone()
                             };
                             running.prev = Some(reference.clone());
+                            running.prev_from = key;
                             if !aggregate {
+                                let percent = ev.display.ends_with('%');
                                 running.block.push(Held {
                                     reference,
+                                    from: key,
                                     unit: unit_of(&value).to_string(),
+                                    percent,
                                 });
                             }
                             results.push(LineResult::Value(ev.display));
@@ -416,7 +792,7 @@ mod tests {
 
     fn recalc_str(source: &str) -> Vec<LineResult> {
         let mut ctx = fend_core::Context::new();
-        recalc(&mut ctx, source, Local::now())
+        recalc(&mut ctx, source, Local::now(), 0)
     }
 
     fn value(s: &str) -> LineResult {
@@ -424,7 +800,7 @@ mod tests {
     }
 
     fn error_containing(result: &LineResult, needle: &str) -> bool {
-        matches!(result, LineResult::Error(e) if e.contains(needle))
+        matches!(result, LineResult::Error(e) if e.to_string().contains(needle))
     }
 
     #[test]
@@ -435,13 +811,133 @@ mod tests {
 
     #[test]
     fn a_variable_assigned_a_percent_phrase_holds_its_result() {
-        let results = recalc_str("price = 100 - 15%\nprice * 2");
+        let results = recalc_str("price = 15% off 100\nprice * 2");
         assert_eq!(results, [value("85"), value("170")]);
     }
 
     #[test]
     fn percent_taken_off_a_block_total() {
-        assert_eq!(recalc_str("60\n40\nsum - 15%")[2], value("85"));
+        assert_eq!(recalc_str("60\n40\n15% off sum")[2], value("85"));
+    }
+
+    /// A typed percent after `+` or `-` is that percent of what is left of
+    /// it, in its bracket or on the line.
+    #[test]
+    fn a_percent_after_plus_or_minus_is_a_percent_of_the_left() {
+        let results = recalc_str("30 + 5%\n100 - 5%\n(100 - 5%) * 2\n\n60\n40\nsum - 10%");
+        assert_eq!(
+            results,
+            [
+                value("31.5"),
+                value("95"),
+                value("190"),
+                LineResult::Blank,
+                value("60"),
+                value("40"),
+                value("90")
+            ]
+        );
+    }
+
+    /// A percent after a total or `prev` of percents adds to it, as
+    /// `5% + 3%` does.
+    #[test]
+    fn a_percent_after_a_total_of_percents_adds_to_it() {
+        assert_eq!(recalc_str("5%\n3%\nsum + 5%")[2], value("13%"));
+        assert_eq!(recalc_str("5%\nprev + 5%")[1], value("10%"));
+        assert_eq!(recalc_str("fee = 5%\nfee + 3%")[1], value("8%"));
+        assert_eq!(
+            recalc_str("1 as a % of 3\n2 as a % of 3\nsum + 5%")[2],
+            value("105%")
+        );
+    }
+
+    /// The key of the last of `lines`, as `recalc` makes it.
+    fn last_key(lines: &[&str]) -> u64 {
+        let running = RunningValues::default();
+        let mut keys = LineKeys::new(0);
+        let (last, before) = lines.split_last().unwrap();
+        for line in before {
+            let key = keys.of(line, &running);
+            keys.after(line, key, false);
+        }
+        keys.of(last, &running)
+    }
+
+    /// A line's key changes with the lines it uses, through the functions
+    /// it calls too, since fend looks up a function's names when it runs.
+    #[test]
+    fn a_line_key_follows_the_names_a_function_uses() {
+        let slow = last_key(&[r"twice = \x. f(f(x))", r"f = \x. x^700", "twice(cm) kg"]);
+        for changed in [
+            [r"twice = \x. f(f(x))", r"f = \x. x^2", "twice(cm) kg"],
+            [r"twice = \x. f(f(f(x)))", r"f = \x. x^700", "twice(cm) kg"],
+            [r"twice = \x. f(f(x))", r"f = \x. x^700", "twice(mm) kg"],
+        ] {
+            assert_ne!(last_key(&changed), slow, "{changed:?}");
+        }
+        // Through an alias too.
+        let alias = [
+            r"twice = \x. f(f(x))",
+            r"f = \x. x^700",
+            "t2 = twice",
+            "t2(cm) kg",
+        ];
+        let mut changed = alias;
+        changed[1] = r"f = \x. x^2";
+        assert_ne!(last_key(&alias), last_key(&changed));
+        // Other lines, and a variable named like the function's argument,
+        // don't change it.
+        for same in [
+            [
+                r"twice = \x. f(f(x))",
+                r"f = \x. x^700",
+                "1 + 2",
+                "twice(cm) kg",
+            ],
+            [
+                r"twice = \x. f(f(x))",
+                r"f = \x. x^700",
+                "x = 1",
+                "twice(cm) kg",
+            ],
+        ] {
+            assert_eq!(last_key(&same), slow, "{same:?}");
+        }
+    }
+
+    /// A function that calls itself, by name or through others, would
+    /// recurse until the stack overflows: the definition that closes the
+    /// loop is refused. Another name for a function copies it, so it closes
+    /// no loop.
+    #[test]
+    fn a_function_that_calls_itself_is_refused() {
+        let results = recalc_str("loopy = \\x. loopy(x)\nloopy(1)");
+        assert!(
+            error_containing(&results[0], "can't call itself"),
+            "{results:?}"
+        );
+        assert!(error_containing(&results[1], "unknown"), "{results:?}");
+        let results = recalc_str("a = \\x. b(x)\nb = \\x. a(x)");
+        assert!(
+            error_containing(&results[1], "can't call itself"),
+            "{results:?}"
+        );
+        let results = recalc_str("inc = \\x. x + 1\nalso = inc\ninc = \\x. also(x) * 10\ninc(1)");
+        assert_eq!(results[3], value("20"));
+    }
+
+    /// `prev` is a built-in word, so with no result above it says so,
+    /// rather than `unknown prev`.
+    #[test]
+    fn prev_with_nothing_above_says_so() {
+        for source in ["prev", "prev + 1", "# H\n\nRent:\nprev"] {
+            let results = recalc_str(source);
+            assert!(
+                matches!(results.last(), Some(LineResult::Error(e)) if e.short() == "nothing above"),
+                "{source}: {results:?}"
+            );
+        }
     }
 
     #[test]
@@ -491,13 +987,18 @@ mod tests {
     #[test]
     fn avg_of_an_empty_block_is_an_error() {
         let results = recalc_str("avg\nsum");
-        assert_eq!(results[0], LineResult::Error("nothing to average".into()));
+        assert_eq!(
+            results[0],
+            LineResult::Error(LineError::plain("nothing to average"))
+        );
         assert_eq!(results[1], value("0"));
     }
 
     #[test]
     fn a_reserved_word_cannot_be_a_variable() {
-        for name in ["total", "sum", "avg", "average", "prev", "today", "in"] {
+        for name in [
+            "total", "sum", "avg", "average", "prev", "today", "in", "and", "plus", "mul", "before",
+        ] {
             let results = recalc_str(&format!("{name} = 5"));
             assert!(error_containing(&results[0], "built-in word"), "{name}");
         }
@@ -523,6 +1024,77 @@ mod tests {
     }
 
     #[test]
+    fn a_function_is_not_a_result_unless_assigned() {
+        // As the app sets it up: `ans` on the first line is `root`'s lambda.
+        let recalc_str = |source: &str| {
+            let mut ctx = fend_core::Context::new();
+            engine::register_root(&mut ctx);
+            recalc(&mut ctx, source, Local::now(), 0)
+        };
+        for source in ["ans", "root", "5\nroot", "Q1:500"] {
+            let last = recalc_str(source).pop().unwrap();
+            assert!(
+                error_containing(&last, "a function, not a number"),
+                "{source}"
+            );
+        }
+        assert_eq!(recalc_str("5\nans")[1], value("5"));
+        assert_eq!(recalc_str("root 3 (27)")[0], value("3"));
+        assert_eq!(recalc_str("f = \\x.x*2\nf 3")[1], value("6"));
+        // Like any error, it stops a `sum` from quietly leaving it out.
+        assert!(error_containing(
+            &recalc_str("1\n2\nroot\nsum")[3],
+            "has an error"
+        ));
+        // `ans` after a result is that result.
+        assert_eq!(recalc_str("1\n2\nans\nsum")[3], value("5"));
+    }
+
+    /// `m = 5` would turn every `1 m` below it into 5.
+    #[test]
+    fn a_variable_cannot_take_over_a_unit_or_constant() {
+        for name in [
+            "m", "s", "g", "h", "t", "c", "e", "k", "min", "cup", "hours", "pi",
+        ] {
+            let results = recalc_str(&format!("{name} = 5\n2 {name}"));
+            assert!(
+                error_containing(&results[0], "is already a unit or constant"),
+                "{name}: {:?}",
+                results[0]
+            );
+        }
+        // Free: unused letters, and a letter fend only finds by its other case.
+        for name in [
+            "x", "y", "z", "rent", "a", "f", "n", "p", "r", "u", "v", "w", "D",
+        ] {
+            assert_eq!(
+                recalc_str(&format!("{name} = 5\n{name} * 2"))[1],
+                value("10"),
+                "{name}"
+            );
+        }
+        // A variable the document made can be assigned again, and a
+        // converter's name is taken like any unit's.
+        assert_eq!(recalc_str("x = 5\nx = x + 1\nx")[2], value("6"));
+        assert_eq!(recalc_str("a = 1\na = a + 1")[1], value("2"));
+        let (mut ctx, _) = define_all(&[converter("lap", &[], "m", "400")]);
+        assert!(error_containing(
+            &recalc(&mut ctx, "lap = 5", Local::now(), 0)[0],
+            "is already a unit or constant"
+        ));
+    }
+
+    #[test]
+    fn sum_and_avg_are_one_operand() {
+        assert_eq!(recalc_str("1\n2\nsum * 2")[2], value("6"));
+        assert_eq!(recalc_str("1\n2\n2 * sum")[2], value("6"));
+        assert_eq!(recalc_str("1\n2\nsum^2")[2], value("9"));
+        assert_eq!(recalc_str("1\n2\n-sum")[2], value("-3"));
+        assert_eq!(recalc_str("4\n2\navg^2")[2], value("9"));
+        assert_eq!(recalc_str("5 m\n3\nsum * 2")[2], value("16 m"));
+    }
+
+    #[test]
     fn dates_stay_out_of_prev_and_sum() {
         let results = recalc_str("today + 17 days\n5\nsum");
         assert!(matches!(results[0], LineResult::Date(_)));
@@ -531,9 +1103,22 @@ mod tests {
     }
 
     #[test]
-    fn percent_results_feed_back_as_their_number() {
-        assert_eq!(recalc_str("50 as a % of 100\nprev + 1")[1], value("51"));
-        assert_eq!(recalc_str("50 as a % of 100\n10\nsum")[2], value("60"));
+    fn percent_results_feed_back_as_percents() {
+        assert_eq!(recalc_str("50 as a % of 100\nprev + 1")[1], value("150%"));
+        assert_eq!(recalc_str("50 as a % of 100\n50%\nsum")[2], value("100%"));
+    }
+
+    #[test]
+    fn a_percent_among_amounts_is_not_added() {
+        for source in ["50%\n10\nsum", "5 m\n10%\navg", "50 as a % of 100\n10\nsum"] {
+            let results = recalc_str(source);
+            assert!(
+                error_containing(&results[2], "can't add a percent"),
+                "{source}"
+            );
+        }
+        assert_eq!(recalc_str("10%\n20%\nsum")[2], value("30%"));
+        assert_eq!(recalc_str("60\n40\n15% off sum")[2], value("85"));
     }
 
     #[test]
@@ -548,6 +1133,16 @@ mod tests {
         assert_eq!(results[0], LineResult::Header);
         assert_eq!(results[1], LineResult::Label);
         assert_eq!(results[2], value("2"));
+    }
+
+    /// A heading with a digit in it starts a block like any other label,
+    /// and doesn't spoil the `sum` below it.
+    #[test]
+    fn a_label_with_a_digit_starts_a_block_and_does_not_break_the_sum() {
+        let results = recalc_str("1\nWeek 2:\n10\n20\nsum\nQ1: 500");
+        assert_eq!(results[1], LineResult::Label);
+        assert_eq!(results[4], value("30"));
+        assert_eq!(results[5], value("500"));
     }
 
     #[test]
@@ -612,7 +1207,10 @@ mod tests {
     fn failed_converter_is_not_registered() {
         let (mut ctx, results) = define_all(&[converter("FEU", &[], "teu", "2")]);
         assert!(results[0].is_err());
-        let err = engine::eval_line(&mut ctx, "1 FEU").err().unwrap();
+        let err = engine::eval_line(&mut ctx, "1 FEU")
+            .err()
+            .unwrap()
+            .to_string();
         assert!(err.starts_with("unknown identifier"), "{err}");
     }
 
@@ -636,6 +1234,43 @@ mod tests {
         let (mut ctx, results) = define_all(&[converter("u5", &[], "m", "10/2")]);
         assert!(results[0].is_ok(), "{:?}", results[0]);
         assert_eq!(display(&mut ctx, "1 u5 to m"), "5 m");
+    }
+
+    /// `1/7` stays exact, where fend's display of it has ten digits.
+    #[test]
+    fn converter_factor_division_is_exact() {
+        let (mut ctx, results) = define_all(&[converter("seventh", &[], "m", "1/7")]);
+        assert!(results[0].is_ok(), "{:?}", results[0]);
+        assert_eq!(display(&mut ctx, "7 seventh to m"), "1 m");
+        assert_eq!(display(&mut ctx, "21 seventh to m"), "3 m");
+    }
+
+    /// A base with a large power would let a line raise it past the guard.
+    #[test]
+    fn converter_base_power_is_limited() {
+        let (_, results) = define_all(&[
+            converter("big", &[], "cm^9999", "1"),
+            converter("big2", &[], "cm^9.999e3", "1"),
+            converter("big3", &[], "cm**9999", "1"),
+            converter("vol", &["vols"], "m^3", "1"),
+            converter("shove", &[], "kg m / s^2", "1"),
+            converter("vol2", &[], "vols^2", "1"),
+            converter("vol3", &[], "vol^3", "1"),
+        ]);
+        for big in &results[..3] {
+            assert_eq!(big, &Err("base power too large".to_string()));
+        }
+        assert!(results[3].is_ok() && results[4].is_ok(), "{results:?}");
+        assert!(results[5].is_ok(), "{:?}", results[5]);
+        assert_eq!(results[6], Err("base power too large".to_string()));
+    }
+
+    /// Digits grouped with spaces read as one number, as they do in a line.
+    #[test]
+    fn converter_factor_may_group_digits_with_spaces() {
+        let (mut ctx, results) = define_all(&[converter("bundle", &[], "m", "1 000")]);
+        assert!(results[0].is_ok(), "{:?}", results[0]);
+        assert_eq!(display(&mut ctx, "2 bundle to m"), "2000 m");
     }
 
     #[test]

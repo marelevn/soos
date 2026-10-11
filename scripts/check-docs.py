@@ -4,6 +4,8 @@
 - Every relative link in a Markdown file points at a file that exists, and
   every `#anchor` at a heading that exists (GitHub's heading slugs).
 - No placeholder markers are left in Markdown or Rust files.
+- Every card image in docs/img is what scripts/make-cards.py draws from its
+  docs/cards source now.
 
 Run from anywhere; exits non-zero with one line per problem.
 """
@@ -74,6 +76,14 @@ def main():
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if PLACEHOLDER.search(line):
                 problems.append(f"{path.relative_to(ROOT)}:{number}: placeholder: {line.strip()}")
+    cards = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "make-cards.py"), "--check"],
+        capture_output=True,
+        text=True,
+    )
+    problems.extend(cards.stdout.splitlines())
+    if cards.returncode and not cards.stdout:
+        problems.append(f"scripts/make-cards.py failed: {cards.stderr.strip()}")
     for problem in problems:
         print(problem)
     return 1 if problems else 0

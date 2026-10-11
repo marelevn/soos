@@ -6,22 +6,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::time::Instant;
 
-use eframe::egui::{
-    self, text::LayoutJob, Color32, FontId, RichText, TextFormat, Theme, ViewportCommand,
-};
+use eframe::egui::{self, Theme, ViewportCommand};
 #[cfg(not(target_os = "linux"))]
-use global_hotkey::{
-    hotkey::{Code, HotKey, Modifiers},
-    Error as HotkeyError, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
-};
-use soos_core::{currency::RateSource, format::Shown, highlight::TokenKind, LineResult};
-use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem},
-    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
-};
+use global_hotkey::{hotkey::HotKey, GlobalHotKeyManager};
+use soos_core::{currency::RateSource, format::swap_separators, LineResult};
+use tray_icon::TrayIcon;
 
 mod converters;
 mod editor;
@@ -36,18 +27,18 @@ mod tray;
 mod update;
 mod window;
 
-use converters::*;
-use editor::*;
-use example::*;
+use converters::{converters_window, ConverterRow, CONVERTERS_GRID_WIDTH};
+use example::example_preview;
 #[cfg(not(target_os = "linux"))]
-use hotkey::*;
-use recalc::*;
-use status_bar::*;
-use style::*;
-use tabs::*;
-use tray::*;
-use update::*;
-use window::*;
+use hotkey::load_hotkey;
+use recalc::{Recalculator, STALE_AFTER, WAIT_AT_LAUNCH, WAIT_FOR_RESULT};
+use style::{app_visuals, install_fonts, Palette};
+use tabs::{load_tabs, Tab};
+use tray::{restored_by_the_system, window_icon, FULL_DESKTOP, MINIMIZE_SETTLES};
+use update::UpdateStatus;
+use window::{
+    soos_modal, DEFAULT_HEIGHT, DEFAULT_WIDTH, EXAMPLE_MODAL_WIDTH, MAIN_MIN_HEIGHT, MAIN_MIN_WIDTH,
+};
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
@@ -55,7 +46,7 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([DEFAULT_WIDTH, DEFAULT_HEIGHT])
             .with_min_inner_size([MAIN_MIN_WIDTH, MAIN_MIN_HEIGHT])
             .with_icon(window_icon()),
-        persistence_path: Some(soos_core::storage::data_dir().join("app.ron")),
+        persistence_path: Some(app_state_path()),
         ..Default::default()
     };
     eframe::run_native(
@@ -75,6 +66,62 @@ fn main() -> eframe::Result<()> {
             Ok(Box::new(SoosApp::new(cc)))
         }),
     )
+}
+
+/// `text` in the decimal mark the app is set to: with the decimal comma on,
+/// `.` and `,` swapped in its numbers. The same swap reads what the user
+/// types and shows what the engine prints (see [`swap_separators`]).
+fn in_decimal_mark(text: &str, decimal_comma: bool) -> String {
+    if decimal_comma {
+        swap_separators(text)
+    } else {
+        text.to_string()
+    }
+}
+
+/// Where eframe keeps the tabs and settings.
+fn app_state_path() -> std::path::PathBuf {
+    soos_core::storage::data_dir().join("app.ron")
+}
+
+/// Moves a save the app couldn't read to `app.ron.bak`, and says so for the
+/// status bar. eframe treats an unreadable file as an empty one, so the next
+/// autosave would otherwise replace every tab with a blank one. `None` when
+/// there is no save to lose.
+fn keep_unreadable_save(path: &std::path::Path) -> Option<String> {
+    if std::fs::metadata(path).ok()?.len() == 0 {
+        return None;
+    }
+    // Never over an older backup: two unreadable saves in a row keep both.
+    let backup = std::iter::once(path.with_extension("ron.bak"))
+        .chain((2..).map(|n| path.with_extension(format!("ron.bak.{n}"))))
+        .find(|candidate| !candidate.exists())?;
+    let kept_as = backup
+        .file_name()
+        .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+    Some(match std::fs::rename(path, &backup) {
+        Ok(_) => format!("Couldn't read your saved tabs. The old file is kept as {kept_as}."),
+        Err(_) => {
+            "Couldn't read your saved tabs, or move the file aside. Copy app.ron somewhere safe before Soos saves again.".to_string()
+        }
+    })
+}
+
+/// A file in the data folder, there while the first recalculation after a
+/// launch runs. A line that overflows fend's stack ends the process (that
+/// can't be caught), and its tab is saved, so Soos would close again at
+/// every launch. Found at launch, it means the last one closed that way:
+/// that tab isn't calculated until it's edited.
+const LAUNCH_MARKER: &str = "recalculating";
+
+/// Whether the last launch closed during its first recalculation, going by
+/// `marker`, which is left in place, or written, for this launch's.
+fn closed_while_calculating(marker: &std::path::Path) -> bool {
+    let closed = marker.exists();
+    if !closed {
+        let _ = std::fs::write(marker, "");
+    }
+    closed
 }
 
 /// From the tray, hotkey and background threads to `logic()`, the only
@@ -97,6 +144,9 @@ enum AppEvent {
 #[serde(default)]
 struct SavedState {
     high_precision: bool,
+    /// `,` is the decimal mark and `.` groups thousands (see
+    /// [`SoosApp::decimal_comma`]).
+    decimal_comma: bool,
     hotkey_code: Option<String>,
     hotkey_mods: u32,
     /// Kept apart from the tabs, so clearing a document never loses them.
@@ -138,17 +188,32 @@ struct SoosApp {
     exported_converters: Vec<soos_core::RawConverter>,
     /// Why the last converters export failed, for the status bar.
     export_error: Option<String>,
+    /// Set at launch when the saved tabs couldn't be read, or Soos closed
+    /// while calculating, for the status bar.
+    load_warning: Option<String>,
+    /// The tab, and its text, that Soos closed while calculating at the
+    /// last launch (see [`LAUNCH_MARKER`]): it isn't calculated until the
+    /// text changes.
+    paused: Option<(u64, String)>,
+    /// This launch's marker, removed when the first results arrive.
+    launch_marker: Option<std::path::PathBuf>,
     show_converters: bool,
     /// The window's size before it was widened for the converters table.
     size_before_converters: Option<egui::Vec2>,
     /// Put the cursor in this row of the converters table.
     focus_converter: Option<usize>,
-    /// False while hidden to the tray.
+    /// False while hidden to the tray, or minimized by closing on macOS.
     visible: bool,
+    /// When closing minimized the window (macOS), until it is shown again.
+    minimized_at: Option<Instant>,
     /// The tray's Quit was chosen, so the close really closes.
     quitting: bool,
     started: bool,
     high_precision: bool,
+    /// Swaps `.` and `,` in what the user types and in the results shown,
+    /// and nowhere else: the engine, `prev` and soos-cli's converters export
+    /// always use `1,234.5`. The saved text is as typed.
+    decimal_comma: bool,
     always_on_top: bool,
     #[cfg(not(target_os = "linux"))]
     current_hotkey: HotKey,
@@ -170,13 +235,29 @@ struct SoosApp {
 
 impl SoosApp {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let saved = cc
+        let loaded = cc
             .storage
-            .and_then(|s| eframe::get_value::<SavedState>(s, eframe::APP_KEY))
-            .unwrap_or_default();
+            .and_then(|s| eframe::get_value::<SavedState>(s, eframe::APP_KEY));
+        let load_warning = match loaded {
+            Some(_) => None,
+            None => keep_unreadable_save(&app_state_path()),
+        };
         let rates = RateSource::new(soos_core::currency::default_cache_path());
         let recalculator = Recalculator::spawn(cc.egui_ctx.clone());
-        let mut app = Self::from_saved(saved, rates, recalculator);
+        let mut app = Self::from_saved(loaded.unwrap_or_default(), rates, recalculator);
+        app.load_warning = load_warning;
+        let marker = soos_core::storage::data_dir().join(LAUNCH_MARKER);
+        if closed_while_calculating(&marker) {
+            let tab = &app.tabs[app.active];
+            app.paused = Some((tab.id, tab.text.clone()));
+            app.load_warning = app.load_warning.or_else(|| {
+                Some(
+                    "Soos closed while calculating this tab, so it waits until you edit it."
+                        .to_string(),
+                )
+            });
+        }
+        app.launch_marker = Some(marker);
         app.recalc(WAIT_AT_LAUNCH);
         app.last_edit = None;
         app.export_converters();
@@ -208,13 +289,18 @@ impl SoosApp {
             last_converters: Vec::new(),
             exported_converters: Vec::new(),
             export_error: None,
+            load_warning: None,
+            paused: None,
+            launch_marker: None,
             show_converters: false,
             size_before_converters: None,
             focus_converter: None,
             visible: true,
+            minimized_at: None,
             quitting: false,
             started: false,
             high_precision: saved.high_precision,
+            decimal_comma: saved.decimal_comma,
             always_on_top: saved.always_on_top,
             #[cfg(not(target_os = "linux"))]
             current_hotkey,
@@ -239,6 +325,16 @@ impl SoosApp {
     /// changed, and take its result if it's ready within `wait`. Called
     /// every frame.
     fn recalc(&mut self, wait: std::time::Duration) {
+        if let Some((id, text)) = &self.paused {
+            let tab = &self.tabs[self.active];
+            if tab.id == *id && tab.text == *text {
+                self.results.clear();
+                return;
+            }
+            if tab.id == *id {
+                self.paused = None;
+            }
+        }
         let text_changed = self.active_text() != self.last_text;
         if text_changed || self.converters != self.last_converters {
             if text_changed {
@@ -253,18 +349,35 @@ impl SoosApp {
             self.received = done.generation;
             self.results = done.results;
             self.converter_results = done.converter_results;
+            if let Some(marker) = self.launch_marker.take() {
+                let _ = std::fs::remove_file(marker);
+            }
         }
     }
 
+    /// The converters as the engine reads them. With the decimal comma on,
+    /// a factor or base typed `0,3048` is `0.3048`; without this it would be
+    /// 3048, silently. The soos-cli export goes through here too.
+    fn raw_converters(&self) -> Vec<soos_core::RawConverter> {
+        self.converters
+            .iter()
+            .map(|row| {
+                let mut raw = row.to_raw();
+                raw.factor = in_decimal_mark(&raw.factor, self.decimal_comma);
+                raw.base = in_decimal_mark(&raw.base, self.decimal_comma);
+                raw
+            })
+            .collect()
+    }
+
     fn force_recalc(&mut self) {
-        let raw: Vec<soos_core::RawConverter> =
-            self.converters.iter().map(ConverterRow::to_raw).collect();
+        let text = in_decimal_mark(self.active_text(), self.decimal_comma);
         self.requested += 1;
         self.requested_at = Some(Instant::now());
         self.recalculator.submit(
             self.requested,
-            self.active_text().to_string(),
-            raw,
+            text,
+            self.raw_converters(),
             self.rates.clone(),
         );
         self.last_text = self.active_text().to_string();
@@ -292,8 +405,7 @@ impl SoosApp {
     /// startup, when the converters overlay closes, and when eframe saves;
     /// not per keystroke, since each write is flushed to disk.
     fn export_converters(&mut self) {
-        let raw: Vec<soos_core::RawConverter> =
-            self.converters.iter().map(ConverterRow::to_raw).collect();
+        let raw = self.raw_converters();
         if raw == self.exported_converters {
             return;
         }
@@ -318,6 +430,7 @@ impl eframe::App for SoosApp {
         self.export_converters();
         let saved = SavedState {
             high_precision: self.high_precision,
+            decimal_comma: self.decimal_comma,
             converters: self.converters.clone(),
             tabs: self.tabs.clone(),
             active: self.active,
@@ -346,6 +459,16 @@ impl eframe::App for SoosApp {
             self.init_hotkey(ctx);
         }
 
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
+        let minimized_for = self.minimized_at.map(|at| at.elapsed());
+        if cfg!(target_os = "macos") && restored_by_the_system(self.visible, minimized_for, focused)
+        {
+            self.visible = true;
+            self.minimized_at = None;
+            // Undo egui's stale `Minimized(true)`; see `restored_by_the_system`.
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
+        }
+
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 #[cfg(not(target_os = "linux"))]
@@ -365,11 +488,20 @@ impl eframe::App for SoosApp {
 
         // Closing hides to the tray, but only if there is a tray to come
         // back from and the window can hide (see `FULL_DESKTOP`); otherwise it
-        // quits.
+        // quits. On macOS it minimizes instead: a click on the Dock icon
+        // brings a minimized window back, but not a hidden one.
         let hide_on_close = self.tray.is_some() && FULL_DESKTOP && !self.quitting;
         if hide_on_close && ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(ViewportCommand::CancelClose);
-            self.set_visible(ctx, false);
+            if cfg!(target_os = "macos") {
+                self.visible = false;
+                self.minimized_at = Some(Instant::now());
+                ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+                // A frame after the minimize has settled, to look for a restore.
+                ctx.request_repaint_after(MINIMIZE_SETTLES + std::time::Duration::from_millis(100));
+            } else {
+                self.set_visible(ctx, false);
+            }
         }
 
         let tx = self.tx.clone();
@@ -400,7 +532,7 @@ impl eframe::App for SoosApp {
 
         if self.show_example {
             let modal = soos_modal(ui, palette, "example-doc", EXAMPLE_MODAL_WIDTH, |ui| {
-                example_preview(ui, palette);
+                example_preview(ui, palette, self.decimal_comma);
                 // The preview itself takes no clicks, so without this a
                 // click on it wouldn't close it.
                 ui.interact(ui.min_rect(), ui.id().with("dismiss"), egui::Sense::click())
@@ -420,6 +552,7 @@ impl eframe::App for SoosApp {
                     &mut self.converters,
                     &self.converter_results,
                     &mut self.focus_converter,
+                    self.decimal_comma,
                 );
             });
             // Clicks inside edit the table, so only Esc or a click outside
@@ -437,6 +570,7 @@ impl eframe::App for SoosApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::result_cells;
 
     /// An in-memory `eframe::Storage`, to save and load the way eframe does.
     #[derive(Default)]
@@ -455,13 +589,13 @@ mod tests {
         fn flush(&mut self) {}
     }
 
-    /// v1.0.0 saved a `text` field that no longer exists. Its saves must
-    /// still load: a failed load falls back to `SavedState::default()`,
-    /// which would open with every tab gone.
+    /// A save with a `text` field, which `SavedState` no longer has, still
+    /// loads: a failed load falls back to `SavedState::default()`, which
+    /// would open with every tab gone.
     #[test]
-    fn a_v1_0_0_save_still_loads() {
+    fn a_save_with_a_removed_field_still_loads() {
         #[derive(serde::Serialize)]
-        struct SavedStateAtV1 {
+        struct SavedStateWithText {
             text: String,
             high_precision: bool,
             hotkey_code: Option<String>,
@@ -479,7 +613,7 @@ mod tests {
         eframe::set_value(
             &mut storage,
             eframe::APP_KEY,
-            &SavedStateAtV1 {
+            &SavedStateWithText {
                 text: String::new(),
                 high_precision: true,
                 hotkey_code: Some("KeyK".to_string()),
@@ -490,11 +624,144 @@ mod tests {
                 always_on_top: true,
             },
         );
-        let saved: SavedState =
-            eframe::get_value(&storage, eframe::APP_KEY).expect("a v1.0.0 save loads");
+        let saved: SavedState = eframe::get_value(&storage, eframe::APP_KEY)
+            .expect("a save with a removed field loads");
         assert_eq!(saved.tabs.len(), 2);
         assert_eq!(saved.tabs[1].text, "rent = 1800");
         assert_eq!(saved.active, 1);
         assert!(saved.high_precision && saved.always_on_top);
+        // A save without the setting has the point.
+        assert!(!saved.decimal_comma);
+    }
+
+    /// eframe reads an unreadable file as an empty one, and the app then
+    /// opens with one blank tab: the next autosave would overwrite the
+    /// user's documents, so the file is kept first.
+    #[test]
+    fn an_unreadable_save_is_kept_before_the_next_autosave() {
+        let mut storage = MemoryStorage::default();
+        eframe::set_value(&mut storage, eframe::APP_KEY, &"not a saved state");
+        assert!(eframe::get_value::<SavedState>(&storage, eframe::APP_KEY).is_none());
+
+        let dir = std::env::temp_dir().join(format!("soos-app-keep-save-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.ron");
+
+        // No save yet, or an empty one: nothing to lose.
+        assert_eq!(keep_unreadable_save(&path), None);
+        std::fs::write(&path, "").unwrap();
+        assert_eq!(keep_unreadable_save(&path), None);
+
+        std::fs::write(&path, "({\"app\": \"garbage").unwrap();
+        let message = keep_unreadable_save(&path).expect("a message");
+        assert!(message.contains("app.ron.bak"), "{message}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("app.ron.bak")).unwrap(),
+            "({\"app\": \"garbage"
+        );
+        assert!(!path.exists(), "the next autosave starts a new file");
+
+        // A second unreadable save doesn't replace the first backup.
+        std::fs::write(&path, "({\"app\": \"more garbage").unwrap();
+        let message = keep_unreadable_save(&path).expect("a message");
+        assert!(message.contains("app.ron.bak.2"), "{message}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("app.ron.bak")).unwrap(),
+            "({\"app\": \"garbage"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A launch that finds the marker says so, and the tab Soos closed on
+    /// isn't calculated until it's edited; other tabs are.
+    #[test]
+    fn a_tab_soos_closed_on_waits_for_an_edit() {
+        let dir = std::env::temp_dir().join(format!("soos-app-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join(LAUNCH_MARKER);
+        assert!(!closed_while_calculating(&marker), "a first launch");
+        assert!(marker.exists(), "written for this launch");
+        assert!(closed_while_calculating(&marker), "it never finished");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut app = app(false, Vec::new());
+        app.tabs[app.active].text = "1 + 1".to_string();
+        app.paused = Some((app.tabs[app.active].id, "1 + 1".to_string()));
+        app.recalc(std::time::Duration::ZERO);
+        assert_eq!(app.requested, 0, "nothing sent to the engine");
+        app.tabs[app.active].text = "1 + 2".to_string();
+        app.recalc(std::time::Duration::from_secs(5));
+        assert!(app.paused.is_none());
+        assert_eq!(app.results, [LineResult::Value("3".to_string())]);
+    }
+
+    fn app(decimal_comma: bool, converters: Vec<ConverterRow>) -> SoosApp {
+        let saved = SavedState {
+            decimal_comma,
+            converters,
+            ..Default::default()
+        };
+        SoosApp::from_saved(
+            saved,
+            RateSource::new(std::path::PathBuf::new()),
+            Recalculator::spawn(egui::Context::default()),
+        )
+    }
+
+    /// Not through `SoosApp::save`, which also writes the converters export
+    /// into the real data directory.
+    #[test]
+    fn the_decimal_comma_is_saved_and_loaded() {
+        let mut storage = MemoryStorage::default();
+        let saved = SavedState {
+            decimal_comma: true,
+            ..Default::default()
+        };
+        eframe::set_value(&mut storage, eframe::APP_KEY, &saved);
+        let loaded: SavedState = eframe::get_value(&storage, eframe::APP_KEY).unwrap();
+        assert!(app(loaded.decimal_comma, Vec::new()).decimal_comma);
+    }
+
+    /// What the user types is read in their notation, the engine and the
+    /// export get the point, and the results come back in the point's form.
+    #[test]
+    fn the_decimal_comma_swaps_what_is_typed_before_the_engine_reads_it() {
+        let mut app = app(true, Vec::new());
+        app.tabs[0].text = "3,5 + 1\n3.000.000 / 2\nNovember 15, 2027".to_string();
+        app.recalc(std::time::Duration::from_secs(5));
+        assert_eq!(
+            app.results[..2],
+            [
+                LineResult::Value("4.5".to_string()),
+                LineResult::Value("1500000".to_string())
+            ]
+        );
+        let cells = result_cells(&app.tabs[0].text, &app.results, false, true);
+        assert_eq!(cells[0].as_ref().unwrap().shown.text, "4,5");
+        assert_eq!(cells[1].as_ref().unwrap().shown.text, "1.500.000");
+        // A date's comma isn't between digits, so the engine reads it as
+        // typed, as with the point.
+        let mut point = self::app(false, Vec::new());
+        point.tabs[0].text = "November 15, 2027".to_string();
+        point.recalc(std::time::Duration::from_secs(5));
+        assert_eq!(app.results[2], point.results[0]);
+    }
+
+    #[test]
+    fn the_decimal_comma_reads_a_converter_factor_and_the_export_keeps_the_point() {
+        let row = ConverterRow {
+            unit: "foot2".to_string(),
+            aliases: String::new(),
+            base: "m".to_string(),
+            factor: "0,3048".to_string(),
+        };
+        assert_eq!(
+            app(true, vec![row.clone()]).raw_converters()[0].factor,
+            "0.3048"
+        );
+        // Off, the engine reads what was typed.
+        assert_eq!(app(false, vec![row]).raw_converters()[0].factor, "0,3048");
     }
 }

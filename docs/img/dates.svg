@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="537" height="178" viewBox="0 0 537 178" role="img" aria-labelledby="title desc">
+<title id="title">Soos example: dates</title>
+<desc id="desc">35 days before 15 nov 2026  Sunday, 11 October 2026
+35 days after 15 nov 2026  Sunday, 20 December 2026
+2 weeks after @2026-12-25  Friday, 8 January 2027
+1 month before nov 15 2027  Friday, 15 October 2027
+@2026-12-25  Friday, 25 December 2026</desc>
+<rect x="0.5" y="0.5" width="536" height="177" rx="10" fill="#222428" stroke="#3a3d42"/>
+<circle cx="20" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="38" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="56" cy="17" r="6" fill="#4a4d52"/>
+<text x="268" y="22" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#959aa2">Soos</text>
+<text x="22" y="56" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">35 days </tspan><tspan fill="#b8bcc3">before</tspan><tspan fill="#f0f0f0"> 15 nov 2026</tspan></text>
+<text x="515" y="56" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">Sunday, 11 October 2026</text>
+<text x="22" y="81" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">35 days </tspan><tspan fill="#b8bcc3">after</tspan><tspan fill="#f0f0f0"> 15 nov 2026</tspan></text>
+<text x="515" y="81" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">Sunday, 20 December 2026</text>
+<text x="22" y="106" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">2 weeks </tspan><tspan fill="#b8bcc3">after</tspan><tspan fill="#f0f0f0"> @2026-12-25</tspan></text>
+<text x="515" y="106" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">Friday, 8 January 2027</text>
+<text x="22" y="131" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">1 month </tspan><tspan fill="#b8bcc3">before</tspan><tspan fill="#f0f0f0"> nov 15 2027</tspan></text>
+<text x="515" y="131" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">Friday, 15 October 2027</text>
+<text x="22" y="156" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">@2026-12-25</tspan></text>
+<text x="515" y="156" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">Friday, 25 December 2026</text>
+</svg>

@@ -1,0 +1,9 @@
+0o1435343 in hex    0x63ae3
+255 in binary       0b11111111
+5 300 in sci        5.3e3
+0.0053 in sci       5.3e-3
+4 xor 6             2
+4 << 5              128
+4 mod 5             4
+arcsin(1)           ≈ 1.5708
+root 3 (27)         3

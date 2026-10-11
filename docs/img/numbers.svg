@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="278" viewBox="0 0 360 278" role="img" aria-labelledby="title desc">
+<title id="title">Soos example: numbers</title>
+<desc id="desc">0o1435343 in hex  0x63ae3
+255 in binary  0b11111111
+5 300 in sci  5.3e3
+0.0053 in sci  5.3e-3
+4 xor 6  2
+4 &lt;&lt; 5  128
+4 mod 5  4
+arcsin(1)  ≈ 1.5708
+root 3 (27)  3</desc>
+<rect x="0.5" y="0.5" width="359" height="277" rx="10" fill="#222428" stroke="#3a3d42"/>
+<circle cx="20" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="38" cy="17" r="6" fill="#4a4d52"/>
+<circle cx="56" cy="17" r="6" fill="#4a4d52"/>
+<text x="180" y="22" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="13" fill="#959aa2">Soos</text>
+<text x="22" y="56" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">0o1435343 </tspan><tspan fill="#b8bcc3">in</tspan><tspan fill="#f0f0f0"> hex</tspan></text>
+<text x="338" y="56" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">0x63ae3</text>
+<text x="22" y="81" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">255 </tspan><tspan fill="#b8bcc3">in</tspan><tspan fill="#f0f0f0"> binary</tspan></text>
+<text x="338" y="81" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">0b11111111</text>
+<text x="22" y="106" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">5 300 </tspan><tspan fill="#b8bcc3">in</tspan><tspan fill="#f0f0f0"> sci</tspan></text>
+<text x="338" y="106" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">5.3e3</text>
+<text x="22" y="131" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">0.0053 </tspan><tspan fill="#b8bcc3">in</tspan><tspan fill="#f0f0f0"> sci</tspan></text>
+<text x="338" y="131" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">5.3e-3</text>
+<text x="22" y="156" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 xor 6</tspan></text>
+<text x="338" y="156" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">2</text>
+<text x="22" y="181" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 &lt;&lt; 5</tspan></text>
+<text x="338" y="181" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">128</text>
+<text x="22" y="206" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">4 mod 5</tspan></text>
+<text x="338" y="206" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">4</text>
+<text x="22" y="231" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">arcsin(1)</tspan></text>
+<text x="338" y="231" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">≈ 1.5708</text>
+<text x="22" y="256" xml:space="preserve" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15"><tspan fill="#f0f0f0">root 3 (27)</tspan></text>
+<text x="338" y="256" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace" font-size="15" fill="#96c85a">3</text>
+</svg>

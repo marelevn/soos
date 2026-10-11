@@ -1,6 +1,9 @@
 //! The converters table: the user's own units, kept apart from the document.
 
-use super::*;
+use eframe::egui::{self, Color32, RichText};
+
+use crate::style::{centered_button, mono, Palette, CHAR_WIDTH};
+use crate::window::{modal_room, MODAL_GAP};
 
 /// One row of the table, as typed: `unit` = `factor` × `base`, `aliases`
 /// comma-separated. soos-core validates it on every recalculation.
@@ -105,6 +108,7 @@ pub(crate) fn converters_window(
     converters: &mut Vec<ConverterRow>,
     results: &[Result<String, String>],
     focus_row: &mut Option<usize>,
+    decimal_comma: bool,
 ) {
     ui.style_mut().spacing.button_padding = CONVERTER_BUTTON_PADDING;
     ui.style_mut().spacing.item_spacing.x = CONVERTER_ITEM_GAP;
@@ -151,12 +155,13 @@ pub(crate) fn converters_window(
                     header(ui, STATUS_COL_WIDTH, "1 unit =");
                     ui.end_row();
 
+                    let factor_hint = crate::in_decimal_mark("33.2", decimal_comma);
                     for (i, row) in converters.iter_mut().enumerate() {
                         let fields = [
                             (&mut row.unit, UNIT_COL_WIDTH, "teu"),
                             (&mut row.aliases, ALIASES_COL_WIDTH, "TEU, teus"),
                             (&mut row.base, BASE_COL_WIDTH, "cbm"),
-                            (&mut row.factor, FACTOR_COL_WIDTH, "33.2"),
+                            (&mut row.factor, FACTOR_COL_WIDTH, factor_hint.as_str()),
                         ];
                         for (column, (text, width, hint)) in fields.into_iter().enumerate() {
                             fixed_cell(ui, egui::vec2(width, row_height), |ui| {
@@ -215,7 +220,8 @@ pub(crate) fn converters_window(
                         } else {
                             match results.get(i) {
                                 Some(Ok(d)) => {
-                                    converter_status_cell(ui, d, palette.result, row_height)
+                                    let d = crate::in_decimal_mark(d, decimal_comma);
+                                    converter_status_cell(ui, &d, palette.result, row_height)
                                 }
                                 Some(Err(e)) => {
                                     converter_status_cell(ui, e, palette.error, row_height)

@@ -1,7 +1,12 @@
 //! The global show/hide hotkey: its default, persistence, and rebinding.
 //! Not on Linux (see `FULL_DESKTOP`), where this module isn't built.
 
-use super::*;
+use eframe::egui;
+use global_hotkey::hotkey::{Code, HotKey, Modifiers};
+use global_hotkey::{Error as HotkeyError, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
+
+use crate::style::{status_symbol, Palette};
+use crate::{AppEvent, SavedState, SoosApp};
 
 /// The keyboard's Calculator key on Windows (upstream `global-hotkey`
 /// can't register it; see CONTRIBUTING.md, "The hotkey patch"),

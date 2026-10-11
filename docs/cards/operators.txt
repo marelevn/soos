@@ -1,0 +1,15 @@
+4 plus 4             8
+4 with 4             8
+4 and 4              8
+
+9 minus 4            5
+9 subtract 4         5
+9 without 4          5
+
+4 times 3            12
+4 multiplied by 3    12
+4 mul 3              12
+
+12 divide 4          3
+12 divide by 4       3
+12 divided by 4      3

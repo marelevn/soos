@@ -1,11 +1,15 @@
 //! Recalculation on a worker thread. The whole document is recalculated on
-//! every edit and a line may take up to fend's time limit, so doing it on
-//! the UI thread would hold up typing.
+//! every edit and a line may take up to the engine's 2-second limit, so
+//! doing it on the UI thread would hold up typing.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
-use super::*;
+use eframe::egui;
+use soos_core::currency::RateSource;
+use soos_core::LineResult;
 
 /// Once results have been out of date this long, they're drawn dimmed.
 pub(crate) const STALE_AFTER: Duration = Duration::from_millis(150);

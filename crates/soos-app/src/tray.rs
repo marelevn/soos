@@ -1,6 +1,12 @@
 //! The tray icon, and hiding and showing the window.
 
-use super::*;
+use std::time::Duration;
+
+use eframe::egui::{self, ViewportCommand};
+use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+
+use crate::{AppEvent, SoosApp};
 
 /// eframe sets the macOS Dock icon from this at runtime, over the bundle's
 /// `soos.icns` -- and the full-bleed logo is too big for Apple's icon
@@ -46,7 +52,7 @@ thread_local! {
     /// menu is only attached while a right-click opens it, and taken off
     /// once the pointer leaves the icon. Both run in the tray's event
     /// handler, on the main thread, where the tray and menu live.
-    static TRAY_AND_MENU: std::cell::RefCell<Option<(TrayIcon, Menu)>> =
+    static TRAY_AND_MENU: std::cell::RefCell<Option<(tray_icon::TrayIcon, Menu)>> =
         const { std::cell::RefCell::new(None) };
 }
 
@@ -66,20 +72,44 @@ fn attach_tray_menu(attach: bool) {
 /// has no `⌨` or `▲`.
 pub(crate) const FULL_DESKTOP: bool = !cfg!(target_os = "linux");
 
+/// How long a window closed on macOS takes to give up focus as it minimizes.
+/// Focus seen before this is the window on its way down, not a restore.
+pub(crate) const MINIMIZE_SETTLES: Duration = Duration::from_millis(500);
+
+/// Whether the system put the window back without Soos showing it. On macOS
+/// closing minimizes the window, and a click on the Dock icon restores it
+/// with no event of ours. Two things then stay wrong: `visible` is still
+/// false, so the hotkey would "show" a window already on screen; and egui
+/// still holds the `Minimized(true)` we sent, which it never refreshes on
+/// macOS, so it skips drawing the UI and the window looks frozen. Having
+/// focus while minimized is the sign (`minimized_for` is the time since the
+/// close).
+pub(crate) fn restored_by_the_system(
+    visible: bool,
+    minimized_for: Option<Duration>,
+    focused: bool,
+) -> bool {
+    !visible && focused && minimized_for.is_some_and(|time| time >= MINIMIZE_SETTLES)
+}
+
 impl SoosApp {
     /// Hide or show the window. On macOS the Dock icon goes with it, since
-    /// the menu-bar icon is the way back (winit registers no
-    /// `NSApplicationDelegate`, so a click on the Dock icon couldn't show a
-    /// hidden window anyway).
+    /// the menu-bar icon is the way back (winit's `NSApplicationDelegate`
+    /// doesn't handle a click on the Dock icon, so it couldn't show a hidden
+    /// window anyway). Showing also brings back a window that closing
+    /// minimized.
     pub(crate) fn set_visible(&mut self, ctx: &egui::Context, visible: bool) {
         if !visible && !FULL_DESKTOP {
             return;
         }
         self.visible = visible;
+        self.minimized_at = None;
         #[cfg(target_os = "macos")]
         show_in_dock(visible);
         ctx.send_viewport_cmd(ViewportCommand::Visible(visible));
         if visible {
+            #[cfg(target_os = "macos")]
+            ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(ViewportCommand::Focus);
         }
     }
@@ -171,5 +201,19 @@ mod tests {
     fn tray_and_window_icons_decode() {
         let _ = window_icon();
         let _ = tray_icon_image();
+    }
+
+    /// Focus counts only once the minimize has had time to take it, so the
+    /// frames just after the close, which still report focus, don't undo it.
+    #[test]
+    fn a_minimized_window_that_has_focus_was_restored() {
+        let later = Some(MINIMIZE_SETTLES);
+        let just_now = Some(Duration::from_millis(50));
+        assert!(restored_by_the_system(false, later, true));
+        assert!(!restored_by_the_system(false, just_now, true));
+        assert!(!restored_by_the_system(false, later, false));
+        assert!(!restored_by_the_system(true, later, true));
+        // Hidden to the tray rather than minimized: nothing to undo.
+        assert!(!restored_by_the_system(false, None, true));
     }
 }

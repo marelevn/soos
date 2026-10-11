@@ -10,7 +10,7 @@ use regex::Regex;
 
 use crate::document::{AVG, PREV, SUM};
 use crate::preprocess::{
-    is_label, INLINE_QUOTED_NOTE, INTO_WORD, LEADING_LABEL, TIMES_WORD, TRAILING_LINE_COMMENT,
+    after_label, is_label, INLINE_QUOTED_NOTE, INTO_WORD, OPERATOR_WORD, TRAILING_LINE_COMMENT,
 };
 
 /// What a highlighted span is.
@@ -25,14 +25,15 @@ pub enum TokenKind {
     Label,
     /// `prev`, `sum`/`total`, `avg`/`average`, `today`/`tomorrow`/`yesterday`/`now`.
     Keyword,
-    /// `in`, `to`, `of`, `on`, `off`, `as`, `into`, `times`.
+    /// `in`, `to`, `of`, `on`, `off`, `as`, `before`, `after`, `into`, and the
+    /// operator words (`times`, `plus`, `divide by`, ...).
     ConversionWord,
 }
 
-/// `in`/`to`/`of`/`on`/`off`/`as`. [`crate::document`] also uses this and
-/// [`DATE_WORD`] to reserve these names.
+/// `in`/`to`/`of`/`on`/`off`/`as`/`before`/`after`. [`crate::document`] also
+/// uses this and [`DATE_WORD`] to reserve these names.
 pub(crate) static CONVERSION_WORD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b(in|to|of|on|off|as)\b").unwrap());
+    LazyLock::new(|| Regex::new(r"\b(in|to|of|on|off|as|before|after)\b").unwrap());
 /// `today`/`tomorrow`/`yesterday`/`now`.
 pub(crate) static DATE_WORD: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b(today|tomorrow|yesterday|now)\b").unwrap());
@@ -73,13 +74,10 @@ pub fn tokens(line: &str) -> Vec<(Range<usize>, TokenKind)> {
             spans.push((m.range(), TokenKind::Comment));
         }
     }
-    // `LEADING_LABEL` is anchored on a line with its indentation removed;
+    // `after_label` is anchored on a line with its indentation removed;
     // the span starts at 0 so the indentation is coloured with the label.
     let indent = line.len() - line.trim_start().len();
-    if let Some(rest) = LEADING_LABEL
-        .captures(line.trim_start())
-        .and_then(|caps| caps.name("rest"))
-    {
+    if let Some(rest) = after_label(line.trim_start()) {
         let label = 0..indent + rest.start();
         if !overlaps_any_of(&spans, &label) {
             spans.push((label, TokenKind::Label));
@@ -92,7 +90,7 @@ pub fn tokens(line: &str) -> Vec<(Range<usize>, TokenKind)> {
             }
         }
     }
-    for re in [&*INTO_WORD, &*TIMES_WORD, &*CONVERSION_WORD] {
+    for re in [&*INTO_WORD, &*OPERATOR_WORD, &*CONVERSION_WORD] {
         for m in re.find_iter(line) {
             if !overlaps_any_of(&spans, &m.range()) {
                 spans.push((m.range(), TokenKind::ConversionWord));
@@ -146,5 +144,17 @@ mod tests {
     fn trailing_comment_and_quote_claim_their_range_first() {
         let spans = tokens("1 + 1 // 5% note");
         assert_eq!(spans, vec![(6..16, TokenKind::Comment)]);
+    }
+
+    #[test]
+    fn operator_words_and_before_after_are_conversion_words() {
+        assert_eq!(
+            kinds("4 plus 4 divided by 2"),
+            vec![TokenKind::ConversionWord, TokenKind::ConversionWord]
+        );
+        assert_eq!(
+            kinds("35 days before 15 nov"),
+            vec![TokenKind::ConversionWord]
+        );
     }
 }
