@@ -99,6 +99,26 @@ right-click it for Quit.
 - Some desktops (GNOME without an AppIndicator extension) show no tray at
   all.
 
+## On Android
+
+The same engine and the same rules, so every page of this guide applies. What
+differs is the touch screen.
+
+- Tap a result to copy it. Tap an error to read its full message, which
+  hovering would show on a desktop. Either appears in a note over the bottom
+  of the page.
+- The result column is at most 40% of the screen wide. A result too long for
+  it ends in `…`; tap it, and the note shows all of it as it's copied.
+- Close a tab with the `×` on it. An **Undo** bar brings it back for a few
+  seconds; there is no Cmd/Ctrl+Shift+T.
+- The status bar has `↔`, `0.1` and `±`, which work as [above](#the-status-bar).
+  The theme follows the system. There is no `?` example, update check,
+  hotkey, tray icon or always-on-top.
+- Exchange rates refresh when you open Soos.
+- Your tabs stay on the phone, as on a desktop: they aren't part of
+  Android's cloud backup, and they don't move to a new phone with Android's
+  setup tools.
+
 ## Error labels
 
 The labels this guide mentions, as Soos shows them. The converter labels

@@ -1,0 +1,17 @@
+[package]
+name = "soos-android"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "JNI bridge from the Soos Android app to soos-core"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+soos-core = { path = "../soos-core" }
+jni = "0.21"
+serde_json = "1"

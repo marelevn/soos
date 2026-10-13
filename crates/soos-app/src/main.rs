@@ -570,7 +570,7 @@ impl eframe::App for SoosApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::result_cells;
+    use soos_core::format::result_cells;
 
     /// An in-memory `eframe::Storage`, to save and load the way eframe does.
     #[derive(Default)]

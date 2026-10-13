@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Everything Soos keeps (state.json, rates.json) is in the `file` domain. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" />
+    </device-transfer>
+</data-extraction-rules>

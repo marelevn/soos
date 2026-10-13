@@ -4,15 +4,16 @@
 
 # Soos
 
-A notepad-style calculator for Windows, macOS and Linux: every line is an
-expression, and its answer shows up beside it.
+A notepad-style calculator for Windows, macOS, Linux and Android: every line
+is an expression, and its answer shows up beside it.
 
 [![Download for Windows](https://img.shields.io/badge/Download-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/marelevn/soos/releases/latest/download/soos-windows-x86_64.zip)
 [![Download for macOS](https://img.shields.io/badge/Download-macOS-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/marelevn/soos/releases/latest/download/Soos.dmg)
 [![Download for Linux](https://img.shields.io/badge/Download-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/marelevn/soos/releases/latest/download/soos-linux-x86_64.tar.gz)
+[![Download for Android](https://img.shields.io/badge/Download-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/marelevn/soos/releases/latest/download/soos-android.apk)
 
 Windows 64-bit (Intel or AMD) · macOS (Apple silicon or Intel) · Linux
-64-bit (Intel or AMD)
+64-bit (Intel or AMD) · Android 8 or newer (64-bit)
 
 ![Soos adding up rent, food and a bus pass, then a variable, prev and avg](assets/screenshot.png)
 
@@ -32,6 +33,10 @@ Windows 64-bit (Intel or AMD) · macOS (Apple silicon or Intel) · Linux
      that folder).
    - **macOS:** open the `.dmg` and drag Soos to Applications (your tabs live
      in Application Support, so the app can be replaced).
+   - **Android:** open the `.apk`, from your browser's downloads or the Files
+     app. Android asks you once to let that app install apps: allow it, then
+     tap **Install**. Soos isn't on Google Play. Your tabs live inside the
+     app, so installing a newer `.apk` over it keeps them.
 3. Windows and macOS warn you the first time, because Soos isn't signed yet:
    - **Windows** says "Windows protected your PC": click **More info**, then
      **Run anyway**.
@@ -49,6 +54,13 @@ Windows 64-bit (Intel or AMD) · macOS (Apple silicon or Intel) · Linux
 
    [Install help](docs/install-help.md) has the details, and how to update
    or uninstall.
+
+On macOS, [Homebrew](https://brew.sh) does all three steps in one, and puts
+`soos-cli` on your `PATH` too:
+
+```
+brew install --cask marelevn/tap/soos
+```
 
 ## Quick guide
 
@@ -94,6 +106,7 @@ version number in the status bar.
   table, kept apart from your text.
 - [Tray icon and hotkey](docs/the-app.md#tray-dock-and-hotkey): bring Soos
   up from any app (Windows and macOS).
+- [On Android](docs/the-app.md#on-android): tap a result to copy it.
 - [In a terminal](docs/soos-cli.md): `soos-cli '20 inches in cm'` prints
   `50.8 cm`.
 

@@ -1,9 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/soos-core", "crates/soos-app", "crates/soos-cli"]
+members = [
+    "crates/soos-core",
+    "crates/soos-app",
+    "crates/soos-cli",
+    "crates/soos-android",
+]
 
 [workspace.package]
-version = "1.0.5"
+version = "1.0.6"
 edition = "2021"
 # Set by egui/eframe 0.36. Every crate inherits it, and CI's `msrv` job
 # checks the workspace on exactly this version.

@@ -32,7 +32,8 @@ and Linux, use a symlink; on Windows, add the folder to your `PATH`.
 ### macOS
 
 `soos-cli` is inside the app bundle:
-`/Applications/Soos.app/Contents/MacOS/soos-cli`.
+`/Applications/Soos.app/Contents/MacOS/soos-cli`. If you installed Soos with
+Homebrew, it's already linked: skip to step 3.
 
 1. Clear the quarantine flag once, as in
    [install help](install-help.md#macos-says-soosapp-not-opened).

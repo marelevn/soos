@@ -229,10 +229,29 @@ impl RateSource {
         }
         let this = self.clone();
         std::thread::spawn(move || {
-            this.refresh_blocking();
-            this.refresh.lock().unwrap().running = false;
+            this.refresh_and_finish();
             on_done();
         });
+    }
+
+    /// For the Android app, which calls it from its own background thread
+    /// whenever it comes to the front: [`Self::refresh_in_background`]'s
+    /// rules (stale, nothing running, not within [`RETRY_BACKOFF`] of the
+    /// last attempt), with the caller's thread doing the waiting. Not
+    /// [`Self::refresh_if_stale_blocking`]: its 10 minutes after a failure
+    /// suit a launcher, but a phone that lost its signal and found it again
+    /// would show `rates offline` that long.
+    pub fn refresh_if_stale_blocking_with_backoff(&self) {
+        if !self.cache.read().unwrap().is_stale() || !self.begin_refresh() {
+            return;
+        }
+        self.refresh_and_finish();
+    }
+
+    /// A refresh that [`Self::begin_refresh`] allowed, and the end of its claim.
+    fn refresh_and_finish(&self) {
+        self.refresh_blocking();
+        self.refresh.lock().unwrap().running = false;
     }
 
     fn begin_refresh(&self) -> bool {
@@ -358,5 +377,14 @@ mod tests {
         assert!(!src.begin_refresh(), "retry inside the backoff window");
         src.refresh.lock().unwrap().last_attempt = Some(Instant::now() - RETRY_BACKOFF);
         assert!(src.begin_refresh());
+    }
+
+    /// Current rates need no download, so no attempt is started (and the
+    /// test needs no network).
+    #[test]
+    fn the_blocking_refresh_with_backoff_leaves_fresh_rates_alone() {
+        let src = RateSource::with_rates(&[("EUR", 1.0)]);
+        src.refresh_if_stale_blocking_with_backoff();
+        assert!(src.refresh.lock().unwrap().last_attempt.is_none());
     }
 }
