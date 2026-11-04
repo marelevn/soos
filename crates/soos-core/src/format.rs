@@ -6,6 +6,7 @@ use std::sync::LazyLock;
 
 use regex::{Captures, Regex};
 
+use crate::highlight::{tokens, TokenKind};
 use crate::LineResult;
 
 /// Shown in place of fend's `"approx. "` prefix.
@@ -120,6 +121,52 @@ pub fn shown(result: &LineResult, high_precision: bool) -> Option<Shown> {
         }
         LineResult::Blank | LineResult::Header | LineResult::Label => None,
     }
+}
+
+/// One line's result, ready for a result column. Its text is painted as
+/// is, flush against the column's right edge: padding it to line decimal
+/// points up would pull some results off that edge.
+pub struct Cell {
+    pub shown: Shown,
+    /// A `sum` or `avg` line, drawn bold.
+    pub total: bool,
+}
+
+/// A line whose result is a total: `sum`, `total`, `avg` or `average`.
+pub fn is_total(line: &str) -> bool {
+    tokens(line).into_iter().any(|(range, kind)| {
+        kind == TokenKind::Keyword
+            && ["sum", "total", "avg", "average"]
+                .iter()
+                .any(|word| line[range.clone()].eq_ignore_ascii_case(word))
+    })
+}
+
+/// A cell per line of `text`, `None` where the line shows nothing. With
+/// `decimal_comma`, each result is shown with `.` and `,` swapped. That is
+/// done here, on the way to the screen, so `results` stay in the form the
+/// engine made them and a toggle can't leave them half swapped. soos-app and
+/// the Android app both draw their result column from this.
+pub fn result_cells(
+    text: &str,
+    results: &[LineResult],
+    high_precision: bool,
+    decimal_comma: bool,
+) -> Vec<Option<Cell>> {
+    text.split('\n')
+        .enumerate()
+        .map(|(i, line)| {
+            let shown = shown(results.get(i)?, high_precision)?;
+            Some(Cell {
+                shown: if decimal_comma {
+                    shown.swapped()
+                } else {
+                    shown
+                },
+                total: is_total(line),
+            })
+        })
+        .collect()
 }
 
 /// An inexact result (`≈ ...`) with each decimal rounded half up to
@@ -1035,5 +1082,102 @@ mod tests {
             shorten_error("invalid dice syntax, try e.g. `4d6`"),
             "can't compute"
         );
+    }
+
+    fn value(s: &str) -> LineResult {
+        LineResult::Value(s.to_owned())
+    }
+
+    fn texts(text: &str, results: &[LineResult]) -> Vec<Option<String>> {
+        texts_with(text, results, false)
+    }
+
+    fn texts_with(text: &str, results: &[LineResult], decimal_comma: bool) -> Vec<Option<String>> {
+        result_cells(text, results, false, decimal_comma)
+            .into_iter()
+            .map(|cell| cell.map(|cell| cell.shown.text))
+            .collect()
+    }
+
+    /// Swapped on the way to the screen: dates and errors are left alone.
+    #[test]
+    fn the_decimal_comma_swaps_values_and_leaves_dates_and_errors() {
+        let text = "a\nb\nc\nd";
+        let results = [
+            value("1234567.5 USD"),
+            value("1234.5 m"),
+            LineResult::Date("Friday, 25 December 2026".to_owned()),
+            LineResult::Error("unknown identifier 'x.5'".to_owned().into()),
+        ];
+        assert_eq!(
+            texts_with(text, &results, true),
+            [
+                Some("$1.234.567,50".to_owned()),
+                Some("1.234,5 m".to_owned()),
+                Some("Friday, 25 December 2026".to_owned()),
+                Some("unknown x.5".to_owned()),
+            ]
+        );
+        assert_eq!(
+            texts_with(text, &results, false)[1].as_deref(),
+            Some("1,234.5 m")
+        );
+    }
+
+    /// Every result is painted as it's formatted, with no padding to line
+    /// up decimal points, so `\u{a5}21,000`, `15` and `500` all end on the
+    /// column's right edge.
+    #[test]
+    fn results_are_not_padded_so_they_end_on_the_right_edge() {
+        let text = "a\nb\nc\nd\ne\nf";
+        let results = [
+            value("1680 USD"),
+            value("21000 JPY"),
+            value("\u{2248} 11.0231131092 lbs"),
+            value("15"),
+            value("500"),
+            value("180.34 cm"),
+        ];
+        assert_eq!(
+            texts(text, &results),
+            [
+                Some("$1,680.00".to_owned()),
+                Some("\u{a5}21,000".to_owned()),
+                Some("\u{2248} 11.0231 lbs".to_owned()),
+                Some("15".to_owned()),
+                Some("500".to_owned()),
+                Some("180.34 cm".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_line_without_a_result_has_no_cell() {
+        let text = "a\nb\n\nc\nd";
+        let results = [
+            value("1.5"),
+            LineResult::Error("unknown identifier 'x'".to_owned().into()),
+            LineResult::Blank,
+            value("100"),
+            LineResult::Date("Wednesday, 30 September 2026".to_owned()),
+        ];
+        assert_eq!(
+            texts(text, &results),
+            [
+                Some("1.5".to_owned()),
+                Some("unknown x".to_owned()),
+                None,
+                Some("100".to_owned()),
+                Some("Wednesday, 30 September 2026".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn totals_are_sum_and_avg_lines() {
+        assert!(is_total("sum"));
+        assert!(is_total("Total: avg in EUR"));
+        assert!(!is_total("prev + 1"));
+        assert!(!is_total("// sum"));
     }
 }

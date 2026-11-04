@@ -1,9 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["crates/soos-core", "crates/soos-app", "crates/soos-cli"]
+members = [
+    "crates/soos-core",
+    "crates/soos-app",
+    "crates/soos-cli",
+    "crates/soos-android",
+]
 
 [workspace.package]
-version = "1.0.5"
+version = "1.0.6"
 edition = "2021"
 # Set by egui/eframe 0.36. Every crate inherits it, and CI's `msrv` job
 # checks the workspace on exactly this version.
@@ -19,7 +24,8 @@ opt-level = "s"
 lto = true
 # One unit lets LTO see the whole crate: about 1% smaller, with no runtime
 # cost. `opt-level = "z"` would save about 12% more, but made heavy lines
-# such as `e^1000` up to 5x slower, past the engine's 200 ms budget.
+# such as `e^1000` up to 5x slower, past the engine's 200 ms `EVAL_TIMEOUT`
+# (a separate 2-second line limit sits above it).
 codegen-units = 1
 strip = true
 # Nothing catches a panic, so unwinding buys nothing. It also means any

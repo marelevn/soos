@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The window's colour until the first frame, so there's no white flash
+         in the dark theme. These are Palette.background in each theme. -->
+    <style name="Theme.Soos" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#f7f8fa</item>
+    </style>
+</resources>

@@ -29,6 +29,34 @@ The MSRV is set by egui/eframe and declared once, as the workspace
 even for `soos-core` alone. CI checks on exactly that version and tests on
 current stable. Raise it only when a dependency requires it.
 
+### Building for Android
+
+The Android app is in `android/` (Kotlin and Jetpack Compose). It calls
+`soos-core` through `crates/soos-android`, which Gradle builds with
+[`cargo-ndk`](https://github.com/bbqsrc/cargo-ndk) before anything else.
+
+1. Install JDK 17, the Android SDK (`platforms;android-37.0`,
+   `build-tools;36.0.0`) and NDK `29.0.14206865`: the NDK has to be that
+   version, because `cargo-ndk` runs before Gradle can fetch one.
+2. `rustup target add aarch64-linux-android` and
+   `cargo install cargo-ndk --locked`.
+3. Set `ANDROID_HOME` and `ANDROID_NDK_HOME`, then:
+
+   ```
+   cd android
+   ./gradlew assembleDebug testDebugUnitTest lintDebug
+   ```
+
+   The APK is `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+The library is always a release build, also for a debug app: a debug fend is
+too slow for the engine's 2-second line limit. The app is 64-bit ARM only;
+an `x86_64` emulator image can't run it, so use an `arm64-v8a` one (on an
+Apple silicon Mac that is the fast kind anyway).
+
+The rate cache and the tabs are in the app's own folder; see
+`SoosApplication` and `AppState`.
+
 ### Where the data lives
 
 There's no installer. `soos_core::storage::data_dir` keeps everything in a
@@ -66,6 +94,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --locked --no-deps --document-p
 python3 scripts/check-docs.py
 # the build on the MSRV (rustup toolchain install 1.95 first)
 cargo +1.95 check --workspace --all-targets --locked
+# the Android app: see "Building for Android" above
+(cd android && ./gradlew assembleDebug testDebugUnitTest lintDebug)
 ```
 
 `scripts/check-docs.py` reads the files Git tracks, so `git add` a new page
@@ -79,7 +109,7 @@ before you run it.
 
 ## Layout
 
-Three crates:
+Four crates:
 
 - `crates/soos-core` -- the calculation engine: fend-core wrapped with the
   document model (`prev`/`sum`/`total`/`avg`, converters), currency,
@@ -92,17 +122,24 @@ Three crates:
 - `crates/soos-cli` -- the CLI (`soos-cli '20 inches in cm'`), which prints
   what the app shows for the same line, and the `--json` output the
   PowerToys plugin uses.
+- `crates/soos-android` -- the JNI bridge the Android app calls: one
+  function per thing it asks of the engine, answering in JSON. It holds no
+  logic of its own that soos-core could hold, so what a result looks like
+  is decided in one place (`soos_core::format::result_cells`).
 
 And around them:
 
+- `android/` -- the Android app, in Kotlin: `AppState` (tabs, the recalc
+  thread, saving), `Document` (the editor and its result column), `Bars`,
+  `Converters` and `Engine`, which declares the bridge's functions.
 - `integrations/powertoys` -- a C# PowerToys Run plugin that calls
   `soos-cli --json`; see the [plugin guide](docs/powertoys.md).
 - `docs/` -- the user guide: Markdown pages, the example cards in
   `docs/cards`, and the images drawn from them in `docs/img`.
 - `scripts/` -- `make-cards.py` draws the card images, `check-docs.py` is
-  CI's docs check, and `macos-icon.py` makes `soos.icns` and `soos.ico`
-  (see [Icons](#icons)). The first two use only the Python standard library;
-  `macos-icon.py` needs Pillow and is for maintainers.
+  CI's docs check, and `macos-icon.py` and `android-icon.py` make the app
+  icons (see [Icons](#icons)). The first two use only the Python standard
+  library; the icon scripts need Pillow and are for maintainers.
 - `assets/` -- the logo, icons, fonts, the README screenshot and the macOS
   `.dmg` background.
 
@@ -204,7 +241,9 @@ wrote it: read the comments and docs in your diff before you commit.
 
 1. Bump the version: `version` in the workspace `Cargo.toml` and
    `"Version"` in `integrations/powertoys/plugin.json`. Run
-   `cargo check --workspace` to refresh `Cargo.lock`.
+   `cargo check --workspace` to refresh `Cargo.lock`. The Android app reads
+   its version from `Cargo.toml` (its `versionCode` is major, minor and
+   patch as `1.0.5` -> `10005`), so there is nothing to bump there.
 2. Squash the release into one commit, with a `Co-authored-by:` line for
    each contributor, and get it onto `main` with a green CI run. Windows
    and macOS are only tested by CI.
@@ -212,11 +251,37 @@ wrote it: read the comments and docs in your diff before you commit.
    runs the tests on Linux first; if one fails, nothing is built and no
    draft is made.
 4. The workflow builds a Windows `.zip`, a macOS `.dmg` (one binary for
-   Apple silicon and Intel) and a Linux `.tar.gz`, and attaches them to a
-   **draft** GitHub Release.
+   Apple silicon and Intel), a Linux `.tar.gz` and a signed Android `.apk`,
+   and attaches them to a **draft** GitHub Release.
 5. Check the files, then publish the draft by hand.
+6. In [marelevn/homebrew-tap](https://github.com/marelevn/homebrew-tap),
+   set `version` in `Casks/soos.rb` and its `sha256` to the new `Soos.dmg`'s
+   (`shasum -a 256 Soos.dmg`), then push. Homebrew users get the release
+   only after this step.
 
-The builds are unsigned until there are certificates to sign them with.
+The Windows and macOS builds are unsigned until there are certificates to
+sign them with.
+
+### The Android signing key
+
+The `.apk` is signed with a key that is kept as four repository secrets:
+`ANDROID_KEYSTORE_BASE64` (the keystore file, `base64 -i soos.jks`),
+`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`.
+Without the first, the workflow stops, because an unsigned `.apk` can't be
+installed over an earlier one.
+
+Android only installs an update signed with the same key as the app it
+replaces, so **keep a copy of the keystore somewhere other than GitHub**:
+if it is lost, the next release is a different app, and everyone has to
+uninstall (losing their tabs) before they can install it. To make one:
+
+```
+keytool -genkeypair -v -keystore soos.jks -alias soos \
+  -keyalg RSA -keysize 4096 -validity 36500
+```
+
+A local `assembleRelease` with none of those variables set gives an unsigned
+`.apk`.
 
 ### The hotkey patch
 
@@ -257,3 +322,11 @@ drawn: Apple's grid puts an 824 px body with a 185 px corner radius on a
 Dock icons. For the same reason the app passes no window icon on macOS --
 eframe would otherwise set the full-bleed one over the bundle's `.icns`.
 The `.ico` keeps the full-bleed logo, at 16, 24, 32, 48, 64 and 256 px.
+
+The Android launcher icon is two layers that the phone masks into its own
+shape, so it can't be the logo's rounded square either.
+`scripts/android-icon.py` (needs Pillow) takes the logo's glyphs out of
+`assets/icons/hicolor/256x256.png` as the foreground, one PNG per density,
+and `android/app/src/main/res/drawable/ic_launcher_background.xml` is the
+logo's gradient. The glyphs are told apart from the background by their
+blue channel, so it only works on the orange logo.

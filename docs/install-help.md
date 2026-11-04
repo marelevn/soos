@@ -11,7 +11,8 @@ new version or remove Soos, see [Updating](#updating) and
 
 Soos keeps your tabs and settings in a `data` folder beside the program (on
 macOS, in `~/Library/Application Support/Soos/`), so use a folder you'll keep
-and can write to.
+and can write to. On Android they stay inside the app, and there's nothing
+to choose.
 
 ### Windows
 
@@ -27,6 +28,10 @@ To use `soos-cli` in a terminal too, see
 1. Open the `.dmg`.
 2. Drag Soos to Applications.
 3. Open Soos from Applications.
+
+Or, with [Homebrew](https://brew.sh), run
+`brew install --cask marelevn/tap/soos`. It clears the quarantine flag for
+you, so macOS doesn't warn you, and links `soos-cli`.
 
 ### Linux
 
@@ -49,6 +54,17 @@ To use `soos-cli` in a terminal too, see
      "$d/soos.desktop" > ~/.local/share/applications/soos.desktop
    ```
 
+### Android
+
+1. Download `soos-android.apk`.
+2. Open it, from your browser's download notice or the Files app.
+3. Android asks you once to let that app install apps (it's the setting
+   called "Install unknown apps"). Allow it, go back, and tap **Install**.
+4. Open Soos from your apps.
+
+It needs Android 8 or newer on a 64-bit phone. Soos isn't on Google Play,
+so Android doesn't update it for you: see [Updating](#updating).
+
 ## Updating
 
 Soos saves your tabs when you close it, so quit it before you update. The
@@ -67,7 +83,8 @@ tabs.
 ### macOS
 
 Your tabs live in `~/Library/Application Support/Soos/`, not in the app, so
-replacing the app keeps them.
+replacing the app keeps them. Installed with Homebrew, quit Soos and run
+`brew upgrade --cask soos` instead of the steps below.
 
 1. Quit Soos: right-click its menu bar icon, then click **Quit**.
 2. Open the new `.dmg` and drag Soos to Applications, replacing the old one.
@@ -87,7 +104,17 @@ replacing the app keeps them.
 
 3. Start Soos.
 
+### Android
+
+Download the new `soos-android.apk` and open it. Android installs it over
+the old Soos and keeps your tabs: every release is signed with the same
+key, which is how Android knows it's the same app.
+
 ## Uninstalling
+
+### Android
+
+Uninstall it as you would any app. That deletes your tabs and settings too.
 
 ### Windows and Linux
 
@@ -103,6 +130,10 @@ replacing the app keeps them.
      `~/.local/bin/soos-cli` link.
 
 ### macOS
+
+Installed with Homebrew, quit Soos and run `brew uninstall --cask soos`.
+That keeps your tabs; `brew uninstall --cask --zap soos` deletes them too.
+Otherwise:
 
 1. Quit Soos.
 2. Drag Soos from Applications to the Trash.
