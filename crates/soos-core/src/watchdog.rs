@@ -302,36 +302,39 @@ mod tests {
     }
 
     /// A line that finishes soon after the limit runs again once: a busy
-    /// machine may have held it up. Slow again, it stays slow.
+    /// machine may have held it up. Slow again, it stays slow. It may run
+    /// again on the thread that replaces the one given up on, or in the next
+    /// recalculation, whichever gets there first, so the runs are counted
+    /// rather than timed.
     #[test]
     fn a_line_just_over_the_limit_is_forgiven_once() {
-        let limit = Duration::from_millis(400);
-        let watchdog = Arc::new(Watchdog::new(limit));
-        let just_over = || lines(&[(1, 450)]);
-        let settle = || std::thread::sleep(Duration::from_millis(300));
+        static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        /// Like fend, it stops once it is given up on, so it always ends
+        /// just over the limit.
+        fn just_over() -> Option<Vec<&'static str>> {
+            let shown = watch(1, || {
+                RUNS.fetch_add(1, Ordering::Relaxed);
+                while !given_up() {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })
+            .map_or("too slow", |()| "done");
+            (!given_up()).then_some(vec![shown])
+        }
+        let watchdog = Arc::new(Watchdog::new(Duration::from_secs(1)));
 
-        assert_eq!(
-            run(&watchdog, 1 << 20, &|| false, just_over()),
-            Some(vec!["too slow"])
-        );
-        settle();
-        let start = Instant::now();
-        assert_eq!(
-            run(&watchdog, 1 << 20, &|| false, just_over()),
-            Some(vec!["too slow"])
-        );
-        assert!(start.elapsed() >= limit, "forgiven, so it ran again");
-        settle();
-        let start = Instant::now();
-        assert_eq!(
-            run(&watchdog, 1 << 20, &|| false, just_over()),
-            Some(vec!["too slow"])
-        );
-        assert!(
-            start.elapsed() < limit,
-            "refused at once: {:?}",
-            start.elapsed()
-        );
+        for _ in 0..3 {
+            assert_eq!(
+                run(&watchdog, 1 << 20, &|| false, just_over),
+                Some(vec!["too slow"])
+            );
+            // The thread given up on forgives the line, or marks it slow
+            // again, before it finishes.
+            while watchdog.abandoned.load(Ordering::Acquire) {
+                std::thread::sleep(POLL);
+            }
+        }
+        assert_eq!(RUNS.load(Ordering::Relaxed), 2, "forgiven once only");
     }
 
     /// A cancelled recalculation isn't run again once its slow line is

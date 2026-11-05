@@ -3,3 +3,11 @@
 Thumbs.db
 integrations/powertoys/bin/
 integrations/powertoys/obj/
+
+# The Android app: Gradle's caches, and the library built by `cargo ndk`.
+android/.gradle/
+android/**/build/
+android/local.properties
+android/app/src/main/jniLibs/
+*.jks
+android/.kotlin/

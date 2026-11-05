@@ -156,8 +156,50 @@ jobs:
           name: soos-linux-tar
           path: soos-linux-x86_64.tar.gz
 
+  android-apk:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+      - run: cargo install cargo-ndk --locked --version 4.1.2
+      # The NDK is the version android/app/build.gradle.kts pins, and
+      # cargo-ndk needs it before Gradle runs, so it can't be left to Gradle.
+      - name: Android SDK and NDK
+        run: |
+          sdkmanager=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
+          yes | "$sdkmanager" --licenses > /dev/null
+          "$sdkmanager" "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+      # An unsigned APK can't update an installed one, so a missing key stops
+      # the release instead of publishing one.
+      - name: Signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "ANDROID_KEYSTORE_BASE64 is not set"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/soos.jks"
+      - run: ./gradlew assembleRelease
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/soos.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - run: cp android/app/build/outputs/apk/release/app-release.apk soos-android.apk
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: soos-android-apk
+          path: soos-android.apk
+
   publish:
-    needs: [windows-zip, macos-dmg, linux-tar]
+    needs: [windows-zip, macos-dmg, linux-tar, android-apk]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -172,3 +214,4 @@ jobs:
             soos-windows-zip/*.zip
             soos-macos-dmg/*.dmg
             soos-linux-tar/*.tar.gz
+            soos-android-apk/*.apk
