@@ -62,13 +62,10 @@ The bar also shows:
 ![With the comma on: 3,5 + 1 is 4,5, 3.000.000 stays three million, and the status bar shows 0,1 in green](img/decimal-comma.png)
 
 By default `,` groups thousands and `.` is the decimal mark, so `3,000,000`
-is three million and `1,5` is 15. To write one and a half as `1,5`:
-
-1. Click `0.1` in the status bar. It turns into `0,1`.
-2. Type `,` for the decimal mark and `.` between thousands: `3,5 + 1` is
-   `4,5`, and `3.000.000` is three million.
-
-Click `0,1` to switch back.
+is three million and `1,5` is 15. Clicking `0.1` in the status bar
+switches the marks: it turns into `0,1`, `,` becomes the decimal mark and
+`.` groups thousands, so `3,5 + 1` is `4,5` and `3.000.000` is three
+million. Clicking `0,1` switches back.
 
 - It is one setting for the whole app, saved with your tabs: it covers every
   tab and stays on after a restart.

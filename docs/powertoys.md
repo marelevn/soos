@@ -1,20 +1,17 @@
-# PowerToys Run plugin (Windows)
+# Install the PowerToys Run plugin
 
-Type `=` and an expression in PowerToys Run; the answer appears as a result,
-as the app would show it. Enter copies the plain value (no thousands
-separators). The plugin runs `soos-cli`, so it always uses a decimal point
-(`1,234.5`), whatever the app's decimal comma setting.
-
-There is no ready-made plugin to download: you build it from this
-repository.
+On Windows, the plugin lets you type `=` and an expression in PowerToys Run
+and get the answer as the app would show it; Enter copies the plain value.
+There is no download: you build it from this repository.
 
 ## Install
 
 1. Install PowerToys and the .NET 9 SDK, and clone this repository.
 2. Put `soos-cli.exe` on your `PATH`: add the folder it is in (see
-   [soos-cli on Windows](soos-cli.md#windows)). Or leave `PATH` alone and
-   point the plugin at it with an environment variable. In PowerShell, with
-   the real path to your `soos-cli.exe`:
+   [Put soos-cli on your PATH](soos-cli-path.md#windows)).
+
+   If you'd rather leave `PATH` alone: point the plugin at `soos-cli.exe`
+   with an environment variable. In PowerShell, with its real path:
 
    ```powershell
    [Environment]::SetEnvironmentVariable("SOOS_EXE", "C:\Tools\Soos\soos-cli.exe", "User")

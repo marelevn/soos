@@ -34,8 +34,9 @@ Windows 64-bit (Intel or AMD) · macOS (Apple silicon or Intel) · Linux
 
 Soos isn't signed yet, so Windows and macOS warn you the first time you open
 it. The Homebrew cask clears macOS's quarantine flag itself. For the
-warnings and how to get past them, and for updating and uninstalling, see
-[Install help](docs/install-help.md).
+warnings and how to get past them, see [Install Soos](docs/install-help.md).
+To update or remove it, see [Update Soos](docs/update.md) and
+[Uninstall Soos](docs/uninstall.md).
 
 ## Quick guide
 
@@ -108,7 +109,9 @@ version number in the status bar (desktop only).
 - [Dates and time zones](docs/dates-and-time.md)
 - [soos-cli](docs/soos-cli.md)
 - [PowerToys Run plugin](docs/powertoys.md)
-- [Install help](docs/install-help.md): install, update, uninstall, first-run warnings
+- [Install Soos](docs/install-help.md), [Update Soos](docs/update.md), [Uninstall Soos](docs/uninstall.md)
+- [Put soos-cli on your PATH](docs/soos-cli-path.md)
+- [Add your own converter](docs/own-converter.md)
 
 ## Build from source
 

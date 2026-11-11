@@ -97,24 +97,16 @@ Click a result to copy it without thousands separators; see
 
 ## Your own converters
 
-A converter is a unit you name, in terms of one Soos already knows. To add
-one:
+A converter is a unit you name, in terms of one Soos already knows. Add one
+in the table behind `↔` in the status bar: see
+[Add your own converter](own-converter.md). Each row has four columns:
 
-![The converter table with one row: unit lap, aliases laps, base m, factor 400, and 1 unit = 400 m; behind it, 3 laps in km is 1.2 km](img/converters.png)
-
-1. Click `↔` in the status bar. A table opens, and the window widens to
-   fit it.
-2. Click **+ Add converter**, then fill in the row:
-
-   | Column | Holds | Example |
-   |---|---|---|
-   | unit | the name you will type | `lap` |
-   | aliases | other names for it, separated by commas | `laps` |
-   | base | a unit Soos already knows | `m` |
-   | factor | 1 unit is this many bases: a number or a calculation | `400` |
-
-3. Click `↔` again to close the table.
-4. Use it: `3 laps in km` is `1.2 km`.
+| Column | Holds | Example |
+|---|---|---|
+| unit | the name you will type | `lap` |
+| aliases | other names for it, separated by commas | `laps` |
+| base | a unit Soos already knows | `m` |
+| factor | 1 unit is this many bases: a number or a calculation | `400` |
 
 The factor may be a calculation, and a fraction stays exact:
 
